@@ -1,0 +1,18 @@
+[package]
+name = "version-bump"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.31"
+regex = "1.10.2"
+thiserror = "1.0.56"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "format_parse"
+harness = false
