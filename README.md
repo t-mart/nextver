@@ -2,7 +2,7 @@
 
 A library for parsing and incrementing arbitrarily-formatted versions.
 
-See the docs: [abd](https://www.google.com)
+See the docs: <https://docs.rs/version-bump>
 
 ## Quick start
 

@@ -1,6 +1,14 @@
 [package]
 name = "version-bump"
 version = "0.1.0"
+authors = ["Tim Martin <tim@tim.direct>"]
+readme = "README.md"
+repository = "https://github.com/t-mart/version-bump"
+documentation = "https://docs.rs/version-bump"
+homepage = "https://github.com/t-mart/version-bump"
+description = "A library for parsing and incrementing arbitrarily-formatted versions."
+license = "MIT"
+
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
