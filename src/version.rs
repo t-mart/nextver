@@ -5,13 +5,23 @@ use std::cmp::Ordering;
 
 use crate::{format::FormatToken, specifier::*, Format, VersionBumpError};
 
-/// Ways to specify a reference date.
+/*
+Ways to specify a date
+
+```
+use version_bump::Date;
+
+let explicit = Date::Explicit { year: 2021, month: 2, day: 3 };
+let utc_now = Date::UtcNow;
+let local_now = Date::LocalNow;
+```
+*/
 pub enum Date {
     /// Use the current date in UTC, as determined when this variant is used.
     UtcNow,
     /// Use the current date in the local timezone, as determined when this variant is used.
     LocalNow,
-    /// Use the given date.
+    /// Build a date from explicit values.
     Explicit { year: i32, month: u32, day: u32 },
 }
 
@@ -187,7 +197,10 @@ impl Version {
     ///   [VersionBumpError::VersionFormatMismatch].
     pub fn parse(version_str: &str, format: Format) -> Result<Self, VersionBumpError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
-            return Err(VersionBumpError::VersionFormatMismatch);
+            return Err(VersionBumpError::VersionFormatMismatch {
+                version_string: version_str.to_owned(),
+                format_string: format.to_string(),
+            });
         };
 
         let mut tokens = Vec::new();
@@ -215,7 +228,10 @@ impl Version {
                 }
                 FormatToken::Literal(format_text) => {
                     if !text.eq(format_text) {
-                        return Err(VersionBumpError::VersionFormatMismatch);
+                        return Err(VersionBumpError::VersionFormatMismatch {
+                            version_string: version_str.to_owned(),
+                            format_string: format.to_string(),
+                        });
                     }
                     VersionToken::Fixed(text)
                 }

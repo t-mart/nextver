@@ -1,3 +1,4 @@
+/// Errors that can occur in this library
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VersionBumpError {
     #[error("Version should change, but did not when incrementing")]
@@ -6,8 +7,8 @@ pub enum VersionBumpError {
     #[error("Year `{year}` should not be negative when formatted`")]
     NegativeYearValue { year: i32 },
 
-    #[error("Version should match format")]
-    VersionFormatMismatch,
+    #[error("Version `{version_string}` should match format `{format_string}`")]
+    VersionFormatMismatch {version_string: String, format_string: String},
 
     #[error("At least one of args semantic_level or date should be Some")]
     NothingToIncrement,
