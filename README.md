@@ -1,4 +1,4 @@
-# Calver
+# version-bump
 
 A library for parsing and incrementing arbitrarily-formatted versions.
 
