@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 
 use crate::{format::FormatToken, specifier::*, Format, VersionBumpError};
 
-/*
+/**
 Ways to specify a date
 
 ```
@@ -15,13 +15,20 @@ let explicit = Date::Explicit { year: 2021, month: 2, day: 3 };
 let utc_now = Date::UtcNow;
 let local_now = Date::LocalNow;
 ```
-*/
+**/
+#[derive(Debug, Clone)]
 pub enum Date {
     /// Use the current date in UTC, as determined when this variant is used.
     UtcNow,
+
     /// Use the current date in the local timezone, as determined when this variant is used.
     LocalNow,
+
     /// Build a date from explicit values.
+    ///
+    /// Note that it is possible to create invalid dates, but no validation will be done until this
+    /// date is used by the library. If you are concerned about this use [Date::from] with a
+    /// [chrono::Datelike] instead.
     Explicit { year: i32, month: u32, day: u32 },
 }
 
@@ -41,6 +48,11 @@ impl Date {
 }
 
 impl<T: Datelike> From<T> for Date {
+    // it's a little inefficient to have a Datelike object already, have to desconstruct its fields
+    // here, and then reconstruct them in get_date. but i don't want to expose the chrono to
+    // the user. we'd also have to jump through some hoops to own the Datelike, which is a trait,
+    // not a concrete type. therefore, i think this might be best: just allow conversion.
+    /// Creates a [Date::Explicit] from a [chrono::Datelike] object.
     fn from(datelike: T) -> Self {
         Date::Explicit {
             year: datelike.year(),
@@ -50,7 +62,7 @@ impl<T: Datelike> From<T> for Date {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum VersionToken {
     Value {
         value: u32,
@@ -137,7 +149,7 @@ impl From<&VersionToken> for FormatToken {
 /// assert!(version < incremented);
 ///
 /// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-/// assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch)));
+/// assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch {..})));
 /// ```
 ///
 /// Or, use a previously created [Format] object:
@@ -210,9 +222,9 @@ impl Version {
 
         for (match_, format_token) in group_captures.zip(&format.tokens) {
             let Some(match_) = match_ else {
-                // would happen if the group was optional (e.g. `(\d)?`). we don't currently
-                // construct our format regex this way, but just in case, plus we get a destructure
-                // on the Option
+                // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
+                // currently construct our format regex this way, but just in case. Plus we get a
+                // destructure on the Option
                 continue;
             };
 
@@ -243,151 +255,206 @@ impl Version {
         Ok(Self { tokens })
     }
 
-    /// Increments the version according to the given [SemanticLevel] and/or [Date].
+    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionBumpError>
+    where
+        F: FnMut((&u32, &'static Specifier)) -> Result<u32, VersionBumpError>,
+    {
+        let mut new_tokens = Vec::with_capacity(self.tokens.len());
+
+        for token in &self.tokens {
+            let new_token = match token {
+                VersionToken::Value { value, spec } => {
+                    let new_value = f((value, spec))?;
+                    VersionToken::Value {
+                        value: new_value,
+                        spec,
+                    }
+                }
+                _ => token.clone(),
+            };
+            new_tokens.push(new_token);
+        }
+
+        Ok(Version { tokens: new_tokens })
+    }
+
+    /// Returns a new version where the semantic value of the given [SemanticLevel] is incremented,
+    /// and all lesser semantic values are reset to zero.
+    ///
+    /// It is absolutely ok to call this method if this version contains calendar values — they just
+    /// won't be updated.
     ///
     /// # Arguments
     ///
-    /// - `semantic_level`: The semantic level to increment. The corresponding semantic specifier
-    ///   must be present in the format string, or an error is returned.
-    ///     - If `Some`, the semantic token of `semantic_level` is incremented and all semantic
-    ///       tokens of lower levels are reset to zero (e.g. `1.2.3` -> `2.0.0`).
-    ///     - If `None`, the semantic tokens in the format string are ignored.
-    /// - `date`: The reference date to incrememnt calendar date tokens. If `None`, the calendar
-    ///   tokens in the format string are ignored.
+    /// - `semantic_level`: The semantic level to increment by one. All lesser levels' values will
+    ///   be reset to zero.
     ///
-    /// ## Notes
-    ///   
-    ///   - Unlike semantic levels, if a date is provided, all calendar tokens are updated.
-    ///   
-    ///   - You can pass any arbitary date, even it if represents a date before that of the tokens
-    ///     in the version string.
-    ///
-    ///   - It is always okay to provide a date, even if the format string does not contain calendar
-    ///     specifiers.
-    ///
-    /// # Examples
+    /// # Example
     ///
     /// ```
     /// use version_bump::{Format, SemanticLevel, Version};
     ///
     /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
     /// let version = Version::parse("1.2.3", format).unwrap();
-    /// let new_version = version.increment(Some(&SemanticLevel::Major), None).unwrap();
+    /// let new_version = version.increment(&SemanticLevel::Major).unwrap();
     /// assert_eq!("2.0.0", new_version.to_string());
+    /// assert!(version < new_version);
     ///
-    /// let new_version = version.increment(Some(&SemanticLevel::Patch), None).unwrap();
-    /// assert_eq!("1.2.4", new_version.to_string());
-    /// ```
-    ///
-    /// ```
-    /// use version_bump::{Date, SemanticLevel, Format, Version};
-    ///
-    /// let format = Format::parse("[YYYY].[PATCH]").unwrap();
-    /// let version = Version::parse("2023.1", format).unwrap();
-    ///
-    /// let date = Date::Explicit {
-    ///    year: 2024,
-    ///    month: 2,
-    ///    day: 3,
-    /// };
-    ///
-    /// let new_version = version.increment(None, Some(&date)).unwrap();
-    /// assert_eq!("2024.1", new_version.to_string());
-    ///
-    /// let new_version = version.increment(Some(&SemanticLevel::Patch), None).unwrap();
-    /// assert_eq!("2023.2", new_version.to_string());
-    ///
-    /// let new_version = version.increment(Some(&SemanticLevel::Patch), Some(&date)).unwrap();
-    /// assert_eq!("2024.2", new_version.to_string());
+    /// let newer_version = new_version.increment(&SemanticLevel::Patch).unwrap();
+    /// assert_eq!("2.0.1", newer_version.to_string());
+    /// assert!(new_version < newer_version);
     /// ```
     ///
     /// # Errors
     ///
     /// - If `semantic_level` is provided but the format string does not contain its respective
     ///   specifier, returns a [VersionBumpError::SemanticLevelSpecifierNotInFormat].
+    pub fn increment(&self, semantic_level: &SemanticLevel) -> Result<Self, VersionBumpError> {
+        // track if the semantic level was found in the format string.
+        let mut sem_level_found = false;
+
+        // track if we should increment or reset to 0
+        let mut sem_already_bumped = false;
+
+        let new_version = self.new_map_value_tokens(|(value, spec)| {
+            let new_value = if let Specifier::Semantic {
+                increment,
+                semantic_level: spec_sem_level,
+                ..
+            } = spec
+            {
+                if semantic_level >= spec_sem_level {
+                    if semantic_level == spec_sem_level {
+                        sem_level_found = true;
+                    }
+                    let incremented = increment(value, sem_already_bumped);
+                    sem_already_bumped = true;
+                    incremented
+                } else {
+                    *value
+                }
+            } else {
+                // not a semantic specifier, so just return the value
+                *value
+            };
+            Ok(new_value)
+        })?;
+
+        if !sem_level_found {
+            return Err(VersionBumpError::SemanticLevelNotInFormat {
+                name: semantic_level.name(),
+            });
+        }
+
+        Ok(new_version)
+    }
+
+    /// Returns a new [Version] where all calendar values in this version are updated to match the
+    /// given [Date]. If semantic values are also present, they will be set to `0`.
+    /// 
+    /// Of course, this makes sense only if this version's format contains calendar specifiers, and
+    /// will error if not.
     ///
-    /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a real
+    /// Although uncommon, you can call this method with a Date before that of this version's
+    /// calendar values. (Depending on your format, a complete date might not even be present.) In
+    /// this case, note that the new version may compare *less* than this one.
+    ///
+    /// # Arguments
+    ///
+    /// - `date`: The reference date to incrememnt calendar date values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use version_bump::{Format, Date, Version};
+    ///
+    /// let format = Format::parse("[YYYY].[0M].[0D]").unwrap();
+    /// let version = Version::parse("2023.12.04", format).unwrap();
+    /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
+    /// assert_eq!("2024.01.02", new_version.to_string());
+    /// assert!(version < new_version);
+    /// ```
+    /// 
+    /// ```
+    /// use version_bump::{Format, Date, Version};
+    ///
+    /// let format = Format::parse("[YYYY].[PATCH]").unwrap();
+    /// let version = Version::parse("2024.123", format).unwrap();
+    /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
+    /// assert_eq!("2024.01.02", new_version.to_string());
+    /// assert!(version < new_version);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
     ///   date, returns a [VersionBumpError::InvalidDateArguments].
     ///
     ///  - Returns a [VersionBumpError::NegativeYearValue]...
     ///
     ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
     ///      specifier.
-    ///    - If the `date` provided is before the year 2000 and this version's format uses the `[YY]`
-    ///      or `[0Y]` specifiers.
+    ///
+    ///    - If the `date` provided is before the year 2000 and this version's format uses the
+    ///      `[YY]` or `[0Y]` specifiers.
     ///
     ///    This is because the formatted values would be negative, which would affect parsing. [See
     ///    specifiers for more](struct.Format.html#specifier-table).
-    pub fn increment(
-        &self,
-        semantic_level: Option<&SemanticLevel>,
-        date: Option<&Date>,
-    ) -> Result<Version, VersionBumpError> {
-        if semantic_level.is_none() && date.is_none() {
-            return Err(VersionBumpError::NothingToIncrement);
-        }
+    pub fn update(&self, date: &Date) -> Result<Self, VersionBumpError> {
+        let naive_date = date.get_date()?;
 
-        let naive_date = date.map(|date| date.get_date()).transpose()?;
+        // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
+        let mut cal_updated = false;
 
-        let mut new_tokens = Vec::new();
-        let mut semantic_level_found = semantic_level.is_none();
-        let mut semantic_already_bumped = false;
-
-        for token in &self.tokens {
-            let new_token = match token {
-                VersionToken::Value { value, spec } => {
-                    let incremented = 'incremented_block: {
-                        match spec {
-                            Specifier::Semantic {
-                                level: cur_level,
-                                incr_fn,
-                                ..
-                            } => {
-                                if let Some(semantic_level) = semantic_level {
-                                    if semantic_level >= cur_level {
-                                        if semantic_level == cur_level {
-                                            semantic_level_found = true;
-                                        }
-                                        let incremented = incr_fn(value, semantic_already_bumped);
-                                        semantic_already_bumped = true;
-                                        break 'incremented_block incremented;
-                                    }
-                                }
-                            }
-                            Specifier::Calendar { incr_fn, .. } => {
-                                if let Some(naive_date) = naive_date {
-                                    let incremented = incr_fn(&naive_date)?;
-                                    break 'incremented_block incremented;
-                                }
-                            }
-                        }
-                        *value // value as is if we didn't break
-                    };
-                    VersionToken::Value {
-                        value: incremented,
-                        spec,
+        let new_version = self.new_map_value_tokens(|(value, spec)| match spec {
+            Specifier::Calendar { update, .. } => {
+                let updated = update(&naive_date);
+                if let Ok(updated) = updated {
+                    if updated != *value {
+                        cal_updated = true;
                     }
                 }
-                VersionToken::Fixed(text) => VersionToken::Fixed(text.clone()),
-            };
-            new_tokens.push(new_token);
-        }
-
-        if let Some(semantic_level) = semantic_level {
-            if !semantic_level_found {
-                return Err(VersionBumpError::SemanticLevelSpecifierNotInFormat {
-                    name: semantic_level.name(),
-                });
+                updated
             }
-        }
+            _ => Ok(*value),
+        })?;
 
-        let new_version = Version { tokens: new_tokens };
-
-        if self.eq(&new_version) {
-            return Err(VersionBumpError::NoChange);
+        if !cal_updated {
+            return Err(VersionBumpError::NoCalendarChange);
         }
 
         Ok(new_version)
+    }
+
+    // TODO: should we require years if any calendar specifiers are present? i can't imagine why
+    // you would create a version scheme that has the possibility of cycling.
+
+    /// Returns a new [Version] where all calendar values in this version are updated to match the
+    /// given [Date]. If the calendar values would not change, the version is incremented by the
+    /// given [SemanticLevel].
+    ///
+    /// This method is designed for formats that have both calendar and semantic specifiers, such as
+    /// `[YYYY].[0M].[0D].[PATCH]`. You would have such a format if you want to be able to increase
+    /// your version multiple times within the period of your smallest calendar specifier, such a
+    /// second time in the same day, continuing with the previous example.
+    ///
+    /// Currently, this method requires identifiers to be ordered in the format such that all
+    /// calendar specifiers come before all semantic specifiers. This is because, when
+    pub fn update_or_increment(
+        &self,
+        date: &Date,
+        fallback_semantic_level: &SemanticLevel,
+    ) -> Result<Self, VersionBumpError> {
+        // TODO: what if we want latter semantic value to be "reset" if former calendar changes?
+        //
+        // just run it twice! might be a little slower than one pass, but we'd have to duplicate
+        // code. maybe there's a way to break out some of the functionality of increment() for reuse
+        let cal_updated = self.update(date);
+        if let Err(VersionBumpError::NoCalendarChange) = cal_updated {
+            self.increment(fallback_semantic_level)
+        } else {
+            cal_updated
+        }
     }
 
     /// Parses a version string against a format string, and returns a [Version] object if the
@@ -457,9 +524,9 @@ mod tests {
         month: 1,
         day: 1,
     };
-    // before year 0
+    // 1 BCE
     static DATE_BCE: Date = Date::Explicit {
-        year: -1,
+        year: 0,
         month: 1,
         day: 1,
     };
@@ -499,61 +566,94 @@ mod tests {
                 assert!(version.is_ok());
                 let version = version.unwrap();
                 assert_eq!(version.to_string(), version_str.to_string());
-                assert_eq!(Into::<Format>::into(&version), format);
+                assert_eq!(Format::from(&version), format);
             }
         }
     }
 
+    // #[test]
+    // fn test_increment_ok() {
+    //     let args = [
+    //         (
+    //             "[MAJOR].[MINOR].[PATCH]",
+    //             "1.2.3",
+    //             (Some(&SemanticLevel::Major), None),
+    //             "2.0.0",
+    //         ),
+    //         (
+    //             "[MAJOR].[MINOR].[PATCH]",
+    //             "1.2.3",
+    //             (Some(&SemanticLevel::Minor), None),
+    //             "1.3.0",
+    //         ),
+    //         (
+    //             "[MAJOR].[MINOR].[PATCH]",
+    //             "1.2.3",
+    //             (Some(&SemanticLevel::Patch), None),
+    //             "1.2.4",
+    //         ),
+    //         (
+    //             "[YYYY].[MM].[DD]",
+    //             "2001.1.1",
+    //             (None, Some(&DATE_2002_02_02)),
+    //             "2002.2.2",
+    //         ),
+    //         (
+    //             "[YYYY].[PATCH]",
+    //             "2001.1",
+    //             (None, Some(&DATE_2002_02_02)),
+    //             "2002.1",
+    //         ),
+    //         (
+    //             "[YYYY].[PATCH]",
+    //             "2001.1",
+    //             (Some(&SemanticLevel::Patch), None),
+    //             "2001.2",
+    //         ),
+    //         (
+    //             "[YYYY].[PATCH]",
+    //             "2001.1",
+    //             (Some(&SemanticLevel::Patch), Some(&DATE_2002_02_02)),
+    //             "2002.2",
+    //         ),
+    //     ];
+    //     for (fmt_str, ver_str, (sem_level, date), expected) in args {
+    //         let format = Format::parse(fmt_str).unwrap();
+    //         let version = Version::parse(ver_str, format).unwrap();
+    //         let next_version = version.increment(sem_level, date).unwrap();
+    //         assert_eq!(expected.to_string(), next_version.to_string());
+
+    //         // next version should always be greater than current version
+    //         assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
+    //     }
+    // }
+
     #[test]
-    fn test_increment_ok() {
+    fn test_increment_semantic_ok() {
         let args = [
             (
                 "[MAJOR].[MINOR].[PATCH]",
                 "1.2.3",
-                (Some(&SemanticLevel::Major), None),
+                SemanticLevel::Major,
                 "2.0.0",
             ),
             (
                 "[MAJOR].[MINOR].[PATCH]",
                 "1.2.3",
-                (Some(&SemanticLevel::Minor), None),
+                SemanticLevel::Minor,
                 "1.3.0",
             ),
             (
                 "[MAJOR].[MINOR].[PATCH]",
                 "1.2.3",
-                (Some(&SemanticLevel::Patch), None),
+                SemanticLevel::Patch,
                 "1.2.4",
             ),
-            (
-                "[YYYY].[MM].[DD]",
-                "2001.1.1",
-                (None, Some(&DATE_2002_02_02)),
-                "2002.2.2",
-            ),
-            (
-                "[YYYY].[PATCH]",
-                "2001.1",
-                (None, Some(&DATE_2002_02_02)),
-                "2002.1",
-            ),
-            (
-                "[YYYY].[PATCH]",
-                "2001.1",
-                (Some(&SemanticLevel::Patch), None),
-                "2001.2",
-            ),
-            (
-                "[YYYY].[PATCH]",
-                "2001.1",
-                (Some(&SemanticLevel::Patch), Some(&DATE_2002_02_02)),
-                "2002.2",
-            ),
         ];
-        for (fmt_str, ver_str, (sem_level, date), expected) in args {
+        for (fmt_str, ver_str, sem_level, expected) in args {
             let format = Format::parse(fmt_str).unwrap();
             let version = Version::parse(ver_str, format).unwrap();
-            let next_version = version.increment(sem_level, date).unwrap();
+            let next_version = version.increment(&sem_level).unwrap();
             assert_eq!(expected.to_string(), next_version.to_string());
 
             // next version should always be greater than current version
@@ -562,11 +662,17 @@ mod tests {
     }
 
     #[test]
-    fn test_nothing_to_increment() {
-        let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
-        let version = Version::parse("1.2.3", format).unwrap();
-        let actual = version.increment(None, None);
-        assert_eq!(Err(VersionBumpError::NothingToIncrement), actual);
+    fn test_increment_calendar_ok() {
+        let args = [("[YYYY].[MM].[DD]", "2001.1.1", &DATE_2002_02_02, "2002.2.2")];
+        for (fmt_str, ver_str, date, expected) in args {
+            let format = Format::parse(fmt_str).unwrap();
+            let version = Version::parse(ver_str, format).unwrap();
+            let next_version = version.update(date).unwrap();
+            assert_eq!(expected.to_string(), next_version.to_string());
+
+            // next version should always be greater than current version
+            assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
+        }
     }
 
     #[test]
@@ -582,9 +688,9 @@ mod tests {
         for (format, sem_level) in args {
             let format = Format::parse(format).unwrap();
             let version = Version::parse("1", format).unwrap();
-            let actual = version.increment(Some(&sem_level), None);
+            let actual = version.increment(&sem_level);
             assert_eq!(
-                Err(VersionBumpError::SemanticLevelSpecifierNotInFormat {
+                Err(VersionBumpError::SemanticLevelNotInFormat {
                     name: sem_level.name(),
                 }),
                 actual
@@ -598,7 +704,7 @@ mod tests {
         // are left to chrono.
         let format = Format::parse("[YYYY].[MM].[DD]").unwrap();
         let version = Version::parse("2001.1.1", format).unwrap();
-        let actual = version.increment(None, Some(&DATE_INVALID));
+        let actual = version.update(&DATE_INVALID);
         assert!(matches!(
             actual,
             Err(VersionBumpError::InvalidDateArguments { .. })
@@ -610,7 +716,7 @@ mod tests {
         let format = Format::parse("[YYYY]").unwrap();
         let version = Version::parse("1997", format).unwrap();
         // note we're doing a backwards year jump here. atypical, but possible.
-        let actual = version.increment(None, Some(&DATE_BCE));
+        let actual = version.update(&DATE_BCE);
         dbg!(&actual);
         assert!(matches!(
             actual,
@@ -624,7 +730,7 @@ mod tests {
         for format_string in format_strings {
             let format = Format::parse(format_string).unwrap();
             let version = Version::parse("97", format).unwrap();
-            let actual = version.increment(None, Some(&DATE_1998_01_01));
+            let actual = version.update(&DATE_1998_01_01);
             assert!(matches!(
                 actual,
                 Err(VersionBumpError::NegativeYearValue { .. })
@@ -642,8 +748,8 @@ mod tests {
         for (format, version) in args {
             let format = Format::parse(format).unwrap();
             let version = Version::parse(version, format).unwrap();
-            let actual = version.increment(None, Some(&DATE_2002_02_02));
-            assert_eq!(Err(VersionBumpError::NoChange), actual);
+            let actual = version.update(&DATE_2002_02_02);
+            assert_eq!(Err(VersionBumpError::NoCalendarChange), actual);
         }
     }
 
@@ -725,5 +831,42 @@ mod tests {
         let version_a = Version::parse(version, format_a).unwrap();
         let version_b = Version::parse(version, format_b).unwrap();
         assert_eq!(Some(Ordering::Equal), version_a.partial_cmp(&version_b));
+    }
+
+    #[test]
+    fn test_empty() {
+        let format = Format::parse("").unwrap();
+        let version = Version::parse("", format).unwrap();
+        assert_eq!("", version.to_string());
+    }
+
+    #[test]
+    fn test_increment_calendar_with_semantic_fallback_falls_back() {
+        let format = Format::parse("[YYYY].[PATCH]").unwrap();
+        let version = Version::parse("2023.1", format).unwrap();
+        let actual = version.update_or_increment(
+            &Date::Explicit {
+                year: 2023, // same year
+                month: 2,
+                day: 3,
+            },
+            &SemanticLevel::Patch,
+        );
+        assert_eq!("2023.2", actual.unwrap().to_string());
+    }
+
+    #[test]
+    fn test_increment_calendar_with_semantic_fallback_calendar_increment() {
+        let format = Format::parse("[YYYY].[PATCH]").unwrap();
+        let version = Version::parse("2023.1", format).unwrap();
+        let actual = version.update_or_increment(
+            &Date::Explicit {
+                year: 2024, // updated year
+                month: 2,
+                day: 3,
+            },
+            &SemanticLevel::Patch,
+        );
+        assert_eq!("2024.1", actual.unwrap().to_string());
     }
 }

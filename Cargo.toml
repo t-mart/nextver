@@ -8,13 +8,13 @@ documentation = "https://docs.rs/version-bump"
 homepage = "https://github.com/t-mart/version-bump"
 description = "A library for parsing and incrementing arbitrarily-formatted versions."
 license = "MIT"
-
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 chrono = "0.4.31"
+clap = { version = "4.4.17", features = ["derive"] }
 regex = "1.10.2"
 thiserror = "1.0.56"
 

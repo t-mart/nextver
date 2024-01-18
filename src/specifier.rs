@@ -7,7 +7,7 @@ use crate::error::VersionBumpError;
 fn full_year(date: &NaiveDate) -> Result<u32, VersionBumpError> {
     // Note: Spec doesn't comment about years that are not 4-digit, so allow them
     let year = date.year();
-    if year < 0 {
+    if year <= 0 {
         // spec also doesn't comment on negative years, but that would affect parsing, so disallow
         Err(VersionBumpError::NegativeYearValue { year })
     } else {
@@ -48,19 +48,17 @@ fn two_digit_pad(num: &u32) -> String {
     format!("{:02}", num)
 }
 
-pub(crate) trait Level {
-    fn order_key(&self) -> u8;
-}
 
 /// A level for semantic specifiers, like `major`, `minor`, or `patch`.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, PartialOrd, Ord)]
+#[repr(u8)]
 pub enum SemanticLevel {
     /// The major level. It is greater than the minor and patch levels.
-    Major,
+    Major = 2,
     /// The minor level. It is less than the major level and greater than the patch level.
-    Minor,
+    Minor = 1,
     /// The patch level. It is less than the major and minor levels.
-    Patch,
+    Patch = 0,
 }
 
 impl SemanticLevel {
@@ -73,46 +71,15 @@ impl SemanticLevel {
     }
 }
 
-impl Level for SemanticLevel {
-    fn order_key(&self) -> u8 {
-        match self {
-            SemanticLevel::Major => 0,
-            SemanticLevel::Minor => 1,
-            SemanticLevel::Patch => 2,
-        }
-    }
-}
-
-impl PartialOrd for SemanticLevel {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SemanticLevel {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // reverse it so e.g. major > minor
-        other.order_key().cmp(&self.order_key())
-    }
-}
-
 #[derive(Debug)]
-pub(crate) enum CalendarLevel {
+pub(crate) enum Type {
+    Major,
+    Minor,
+    Patch,
     Year,
     Month,
     Week,
     Day,
-}
-
-impl Level for CalendarLevel {
-    fn order_key(&self) -> u8 {
-        match self {
-            CalendarLevel::Year => 0,
-            CalendarLevel::Month => 1,
-            CalendarLevel::Week => 2,
-            CalendarLevel::Day => 3,
-        }
-    }
 }
 
 // Common fields for semantic and calendar specifiers
@@ -125,11 +92,11 @@ pub(crate) struct CommonSpecifier {
     /// The regex pattern used to match this specifier in a version string.
     pub(crate) version_pattern: &'static str,
 
-    /// The name of this specifier. Used in debugging.
-    pub(crate) name: &'static str,
-
     /// A function that formats a value for this specifier as a string
     pub(crate) value_format_fn: fn(&u32) -> String,
+
+    /// The level of this specifier. Used to check that specifiers are in the right order.
+    pub(crate) type_: Type,
 }
 
 #[derive(Debug)]
@@ -141,33 +108,27 @@ pub(crate) enum Specifier {
         /// Increments a value for a semantic specifier. The first argument is the current value,
         /// and the second argument is whether or not a previous specifier has already been
         /// incremented. This is used to determine if the value should be reset to 0.
-        incr_fn: fn(&u32, bool) -> u32,
+        increment: fn(&u32, bool) -> u32,
 
-        /// The semantic level of this specifier. This serves two purposes:
-        ///   - lets the user specify which specifiers they want to in [crate::Version::increment]
-        ///   - lets us check that specifiers are in the right order
-        level: SemanticLevel,
+        // used for identifying and comparing specifiers to increment
+        semantic_level: SemanticLevel,
     },
 
     /// A calendar specifier, like `YYYY`, `MM`, or `DD`.
     Calendar {
         common: CommonSpecifier,
 
-        /// Increments a value for a calendar specifier. The argument is a date which will be
+        /// Updates a value for a calendar specifier. The argument is a date which will be
         /// referenced to determine new values. Returns Err if something about the date is unusable
         /// for the specifier (e.g. a year before 0 for `YYYY`).
-        incr_fn: fn(&NaiveDate) -> Result<u32, VersionBumpError>,
-
-        /// The calendar level of this specifier. This lets us check that specifiers are in the
-        /// right order.
-        level: CalendarLevel,
+        update: fn(&NaiveDate) -> Result<u32, VersionBumpError>,
     },
 }
 
 impl Deref for Specifier {
     type Target = CommonSpecifier;
 
-    // Access the common fields of a specifier by dereferencing it
+    /// Access the common fields of a specifier by dereferencing it
     fn deref(&self) -> &Self::Target {
         match self {
             Specifier::Semantic { common, .. } => common,
@@ -184,46 +145,39 @@ impl Specifier {
     pub(crate) fn version_pattern_group(&self) -> String {
         format!("({})", self.version_pattern)
     }
-
-    pub(crate) fn level(&self) -> &dyn Level {
-        match self {
-            Specifier::Semantic { level, .. } => level,
-            Specifier::Calendar { level, .. } => level,
-        }
-    }
 }
 
 pub(crate) static MAJOR: Specifier = Specifier::Semantic {
     common: CommonSpecifier {
         format_pattern: "[MAJOR]",
         version_pattern: r"\d+",
-        name: "major",
         value_format_fn: u32::to_string,
+        type_: Type::Major,
     },
-    incr_fn: sem_ver_incr,
-    level: SemanticLevel::Major,
+    increment: sem_ver_incr,
+    semantic_level: SemanticLevel::Major,
 };
 
 pub(crate) static MINOR: Specifier = Specifier::Semantic {
     common: CommonSpecifier {
         format_pattern: "[MINOR]",
         version_pattern: r"\d+",
-        name: "minor",
         value_format_fn: u32::to_string,
+        type_: Type::Minor,
     },
-    incr_fn: sem_ver_incr,
-    level: SemanticLevel::Minor,
+    increment: sem_ver_incr,
+    semantic_level: SemanticLevel::Minor,
 };
 
 pub(crate) static PATCH: Specifier = Specifier::Semantic {
     common: CommonSpecifier {
         format_pattern: "[PATCH]",
         version_pattern: r"\d+",
-        name: "patch",
         value_format_fn: u32::to_string,
+        type_: Type::Patch,
     },
-    incr_fn: sem_ver_incr,
-    level: SemanticLevel::Patch,
+    increment: sem_ver_incr,
+    semantic_level: SemanticLevel::Patch,
 };
 
 /// Full year - 2006, 2016, 2106
@@ -231,11 +185,10 @@ pub(crate) static FULL_YEAR: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[YYYY]",
         version_pattern: r"\d+",
-        name: "full_year",
         value_format_fn: u32::to_string,
+        type_: Type::Year,
     },
-    incr_fn: full_year,
-    level: CalendarLevel::Year,
+    update: full_year,
 };
 
 /// Short year - 6, 16, 106
@@ -243,11 +196,10 @@ pub(crate) static SHORT_YEAR: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[YY]",
         version_pattern: r"\d+",
-        name: "short_year",
         value_format_fn: u32::to_string,
+        type_: Type::Year,
     },
-    incr_fn: short_year,
-    level: CalendarLevel::Year,
+    update: short_year,
 };
 
 /// Zero-padded year - 06, 16, 106
@@ -255,11 +207,10 @@ pub(crate) static ZERO_PADDED_YEAR: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[0Y]",
         version_pattern: r"\d+",
-        name: "zero_padded_year",
         value_format_fn: two_digit_pad,
+        type_: Type::Year,
     },
-    incr_fn: short_year,
-    level: CalendarLevel::Year,
+    update: short_year,
 };
 
 /// Short month - 1, 2 ... 11, 12
@@ -267,11 +218,10 @@ pub(crate) static SHORT_MONTH: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[MM]",
         version_pattern: r"\d+",
-        name: "short_month",
         value_format_fn: u32::to_string,
+        type_: Type::Month,
     },
-    incr_fn: |date| Ok(date.month()),
-    level: CalendarLevel::Month,
+    update: |date| Ok(date.month()),
 };
 
 /// Zero-padded month - 01, 02 ... 11, 12
@@ -279,11 +229,10 @@ pub(crate) static ZERO_PADDED_MONTH: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[0M]",
         version_pattern: r"\d+",
-        name: "zero_padded_month",
         value_format_fn: two_digit_pad,
+        type_: Type::Month,
     },
-    incr_fn: |date| Ok(date.month()),
-    level: CalendarLevel::Month,
+    update: |date| Ok(date.month()),
 };
 
 /// Short week (since start of year) - 1, 2, 33, 52
@@ -291,11 +240,10 @@ pub(crate) static SHORT_WEEK: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[WW]",
         version_pattern: r"\d+",
-        name: "short_week",
         value_format_fn: u32::to_string,
+        type_: Type::Week,
     },
-    incr_fn: |date| Ok(weeks_from_sunday(date)),
-    level: CalendarLevel::Week,
+    update: |date| Ok(weeks_from_sunday(date)),
 };
 
 /// Zero-padded week - 01, 02, 33, 52
@@ -303,11 +251,10 @@ pub(crate) static ZERO_PADDED_WEEK: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[0W]",
         version_pattern: r"\d+",
-        name: "zero_padded_week",
         value_format_fn: two_digit_pad,
+        type_: Type::Week,
     },
-    incr_fn: |date| Ok(weeks_from_sunday(date)),
-    level: CalendarLevel::Week,
+    update: |date| Ok(weeks_from_sunday(date)),
 };
 
 /// Short day - 1, 2 ... 30, 31
@@ -315,11 +262,10 @@ pub(crate) static SHORT_DAY: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[DD]",
         version_pattern: r"\d+",
-        name: "short_day",
         value_format_fn: u32::to_string,
+        type_: Type::Day,
     },
-    incr_fn: |date| Ok(date.day()),
-    level: CalendarLevel::Day,
+    update: |date| Ok(date.day()),
 };
 
 /// Zero-padded day - 01, 02 ... 30, 31
@@ -327,11 +273,10 @@ pub(crate) static ZERO_PADDED_DAY: Specifier = Specifier::Calendar {
     common: CommonSpecifier {
         format_pattern: "[0D]",
         version_pattern: r"\d+",
-        name: "zero_padded_day",
         value_format_fn: two_digit_pad,
+        type_: Type::Day,
     },
-    incr_fn: |date| Ok(date.day()),
-    level: CalendarLevel::Day,
+    update: |date| Ok(date.day()),
 };
 
 pub(crate) static ALL: &[&Specifier] = &[
@@ -358,11 +303,30 @@ mod tests {
     }
 
     #[test]
+    fn test_full_year() {
+        let args = [
+            (ymd(1, 1, 1), Ok(1)),
+            (ymd(10, 1, 1), Ok(10)),
+            (ymd(100, 1, 1), Ok(100)),
+            (ymd(1000, 1, 1), Ok(1000)),
+            (ymd(10000, 1, 1), Ok(10000)),
+            (ymd(0, 1, 1), Err(VersionBumpError::NegativeYearValue { year: 0 })),
+        ];
+        for (date, expected) in args {
+            let actual = full_year(&date);
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
     fn test_short_year() {
         let args = [
-            (ymd(2006, 1, 1), Ok(6)),
-            (ymd(2016, 1, 1), Ok(16)),
-            (ymd(2106, 1, 1), Ok(106)),
+            (ymd(2000, 1, 1), Ok(0)),
+            (ymd(2010, 1, 1), Ok(10)),
+            (ymd(2100, 1, 1), Ok(100)),
+            (ymd(3000, 1, 1), Ok(1000)),
+            (ymd(12000, 1, 1), Ok(10000)),
+            (ymd(1999, 1, 1), Err(VersionBumpError::NegativeYearValue { year: 1999 })),
         ];
         for (date, expected) in args {
             let actual = short_year(&date);

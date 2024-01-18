@@ -22,7 +22,7 @@
 //! 
 //! // errors tell you what went wrong
 //! let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-//! assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch)));
+//! assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch {..})));
 //! ```
 //! 
 //! Jump to the specifiers table [here](struct.Format.html#specifier-table).
