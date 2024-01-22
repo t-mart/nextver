@@ -29,6 +29,7 @@
 #![feature(lazy_cell)]
 
 mod error;
+mod scheme;
 mod format;
 mod specifier;
 mod version;
@@ -36,4 +37,5 @@ mod version;
 pub use crate::error::VersionBumpError;
 pub use crate::format::Format;
 pub use crate::specifier::SemanticLevel;
-pub use crate::version::{Date, Version};
+// pub use crate::version::{Date, Version};
+pub use crate::version::{Date};

@@ -1,5 +1,8 @@
+use crate::{scheme::Scheme, specifier::Specifier};
+
 /// Errors that can occur in this library
-// TODO: can we use static references to specifiers? would we run into any cyclic dependency issues?
+// TODO: we need to break this down. first pass: format errors, version errors, increment errors.
+// and then, make a top-level error that accepts these categories as variants.
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VersionBumpError {
     #[error("Version should change when incrementing calendar specifiers, but did not")]
@@ -17,7 +20,9 @@ pub enum VersionBumpError {
     #[error("Unknown specifier pattern `{pattern}` in format")]
     UnknownSpecifier { pattern: String },
 
-    #[error("Specifier in format should be terminated with a closing square bracket (`]`): {pattern}")]
+    #[error(
+        "Specifier in format should be terminated with a closing square bracket (`]`): {pattern}"
+    )]
     UnterminatedSpecifier { pattern: String },
 
     #[error("To increment `{name}`, it should be present in format")]
@@ -29,18 +34,40 @@ pub enum VersionBumpError {
     #[error("Explicit year ({year}), month ({month}), and day ({day}) arguments cannot be made into a valid date")]
     InvalidDateArguments { year: i32, month: u32, day: u32 },
 
-    #[error("Specifiers must strictly decrease, got `{next_spec}` after `{prev_spec}`")]
+    #[error("Specifiers must strictly decrease, got `{next}` after `{prev}`")]
     SpecifiersMustStrictlyDecrease {
-        prev_spec: &'static str,
-        next_spec: &'static str,
+        prev: &'static Specifier,
+        next: &'static Specifier,
     },
 
-    #[error("One and only one non-cyclic specifier should be in format, and should be first, got `{spec}`")]
-    NonCyclicSpecifierNotFirst { spec: &'static str },
+    #[error("In {scheme_name} format, first specifier should be {expected_first} got `{spec}`")]
+    WrongFirstSpecifier {
+        spec: &'static Specifier,
+        scheme_name: String,
+        expected_first: String,
+    },
 
-    #[error("All calendar specifiers should precede all semantic specifiers, got `{next_spec}` after `{prev_spec}`")]
+    #[error("All calendar specifiers should precede all semantic specifiers, got `{next}` after `{prev}`")]
     CalenderMustPrecedeSemantic {
-        prev_spec: &'static str,
-        next_spec: &'static str,
+        prev: &'static Specifier,
+        next: &'static Specifier,
+    },
+
+    #[error("{spec} should not be in a {scheme_name} format")]
+    MajorInCalSemFormat {
+        spec: &'static Specifier,
+        scheme_name: String,
+    },
+
+    #[error("Specifier `{next}` should be relative to its predecessor `{prev}`")]
+    SpecifierMustBeRelative {
+        prev: &'static Specifier,
+        next: &'static Specifier,
+    },
+
+    #[error("Unacceptable specifier `{spec}` in {scheme_name} format")]
+    UnacceptableSpecifier {
+        spec: &'static Specifier,
+        scheme_name: String,
     },
 }

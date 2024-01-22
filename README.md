@@ -69,6 +69,15 @@ differences and clarifications, that you will hopefully find reasonable.
 
   - `[YYYY].[MAJOR]` ❌ two non-cyclic specifiers
 
+- For calendar specifiers, a succeeding specifier must relative to the previous
+  one. This only manifests in the `[DD]` specifier, which must be preceded by
+  `[MM]`.
+
+  This is because a day is month-relative, and would otherwise cycle multiple
+  times in a year.
+
+  - `[YYYY].[DD]` ❌ day without month
+
 - All calendar specifiers must precede semantic ones if both are present in a
   format.
 
@@ -97,6 +106,33 @@ errors in such cases.
 
 Having said that, if any of these are disagreeable, open an issue to discuss. We
 just feel these are the kind of versions we would want to work with.
+
+TODO: incorporate this
+
+Another way of saying all this is that these are the only allowed formats:
+
+- Semantic
+  - `[MAJOR]`
+  - `[MAJOR]`, `[MINOR]`
+  - `[MAJOR]`, `[MINOR]`, `[PATCH]`
+- Calendar
+  - `[<year>]`
+  - `[<year>]`, `[<month>]`
+  - `[<year>]`, `[<month>]`, `[<day>]`
+  - `[<year>]`, `[<week>]`
+- Calendar + Semantic
+  - `[<year>]`, `[MINOR]`
+  - `[<year>]`, `[MINOR]`, `[PATCH]`
+  - `[<year>]`, `[PATCH]`
+  - `[<year>]`, `[<month>]`, `[MINOR]`
+  - `[<year>]`, `[<month>]`, `[MINOR]`, `[PATCH]`
+  - `[<year>]`, `[<month>]`, `[PATCH]`
+  - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`
+  - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`, `[PATCH]`
+  - `[<year>]`, `[<month>]`, `[<day>]`, `[PATCH]`
+  - `[<year>]`, `[<week>]`, `[MINOR]`
+  - `[<year>]`, `[<week>]`, `[MINOR]`, `[PATCH]`
+  - `[<year>]`, `[<week>]`, `[PATCH]`
 
 ## Possible Improvements
 
