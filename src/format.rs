@@ -1,10 +1,10 @@
 use crate::scheme::Scheme;
 use crate::specifier::{Specifier, ALL};
-use crate::VersionBumpError;
+use crate::{Version, VersionBumpError};
 use core::fmt;
-use std::marker::PhantomData;
 use regex::Regex;
 use std::cell::OnceCell;
+use std::marker::PhantomData;
 
 /// State machine for parsing the specifiers in a format string.
 pub(crate) enum ParseState {
@@ -68,43 +68,7 @@ a version string into a [Version](crate::version::Version) struct.
 The format string is made up of specifiers and literals. Specifiers indicate numeric values that
 can change, while literals are fixed text.
 
-# Example
-
-```
-use version_bump::Format;
-
-let format = Format::parse("[YYYY].[PATCH].[[escaped]]");
-```
-
-# Specifiers
-
-To specify an specifier, surround the specifier name with square brackets (e.g. `[MAJOR]`).
-
-You can mix specifiers of different types (e.g. `[YYYY].[MINOR].[PATCH]`) as long as they are in
-the right [order](#specifier-order).
-
-## [Specifier Table](#specifier-table)
-
-In the "Example" column below, we reference a major of `1`, minor of `2`, patch of `3` and a
-date of `2001-02-03` (in the 4th week).
-
-| Specifier | Example | Type   | [Greedy?](#greedy-specifiers) | Description | Reference |
-|------------|--------|-------|------------|-------------|-----------|
-| `[MAJOR]`  | `1` | Semantic - Major | **Yes** | The major part of a version | [1] |
-| `[MINOR]`  | `2` | Semantic - Minor | **Yes** | The minor part of a version | [1] |
-| `[PATCH]`  | `3` | Semantic - Patch | **Yes** | The patch part of a version | [1] |
-| `[YYYY]`   | `2001` | Calendar - Year  | **Yes** | Full year. This will be at least 1 digit (e.g. year `1` or year `10000`). We do not support BCE years for this specifier. | [2] |
-| `[YY]`     | `1` | Calendar - Year  | **Yes** | The last two digits of the year (for years <= `2099`). In general, this is the same as `year - 2000` so that, for example, years `2001`, `2101`, ... `3001` are unambiguous. We do not support years less than `2000` for this specifier. | [2] |
-| `[0Y]`     | `01` | Calendar - Year  | **Yes** | Same as `YY` but zero-padded to at least 2 characters. | [2] |
-| `[MM]`     | `1` | Calendar - Month |  **Yes** | Month number (`1`–`12`). | [2] |
-| `[0M]`     | `01` | Calendar - Month | No | Same as `MM` but zero-padded to 2 characters. | [2] |
-| `[WW]`     | `4` | Calendar - Week |  **Yes** | Week of the year (`0`–`53`). Week 1 starts with the first Sunday in that year. | [2] |
-| `[0W]`     | `04` | Calendar - Week | No | Same as `WW` but zero-padded to 2 characters. | [2] |
-| `[DD]`     | `3` | Calendar - Day |  **Yes** | Day number (`1`–`31`). | [2] |
-| `[0D]`     | `03` | Calendar - Day | No | Same as `DD` but zero-padded to 2 characters. | [2] |
-
-[1]: https://semver.org/
-[2]: https://calver.org/
+See the specifier table [here](crate#specifier-table) for a list of all specifiers.
 
 ## Specifier Order
 
@@ -162,60 +126,26 @@ date of `2001-02-03` (in the 4th week).
   years in this format are relative to the year `2000`, it does not clearly
   forbid lesser years, but we do.
 
-## Escaping
-
-If you want to escape an opening bracket, precede it with a backslash (`\`). Only the opening
-bracket can be escaped. Literal closing brackets must not be escaped.
-
-```
-use version_bump::{Format};
-
-// Hint: use raw strings to avoid having to escape the backslash
-let format = Format::parse(r"\[YYYY]");
-// Or, escape the backslash itself in a regular string
-let format = Format::parse("\\[YYYY]");
-```
-
-### Greedy Specifiers
-
-Greedy specifiers greedily match digits (sometimes with an upper bound and sometimes not). A
-caveat with their use is that if you specify two consecutive greedy specifiers, the former
-specifier can consume some of the digits of the latter. This is probably not what you want. For
-this reason, it's recommended to use a literal separator or a non-greedy latter specifier in
-such cases.
-
-```
-use version_bump::Format;
-
-// always consistent because of literal separator
-let format = Format::parse("[YYYY].[MM]");
-
-// inconsistent: YYYY will consume first digit of a two-digit MM
-let format = Format::parse("[YYYY][MM]");
-
-// always consistent: zero-padded `0M` is always two digits
-let format = Format::parse("[YYYY][0M]");
-```
 **/
 #[derive(Debug, Clone)]
 pub struct Format<S: Scheme> {
     // TODO: Consider making Version from this struct instead of having to pass them into Version
     pub(crate) tokens: Vec<FormatToken>,
     regex: OnceCell<Regex>,
-    scheme: S,
+    scheme: PhantomData<S>,
 }
 
-impl <S:Scheme> Format<S> {
-    pub(crate) fn new(tokens: Vec<FormatToken>, regex: OnceCell<Regex>, scheme: S) -> Self {
+impl<S: Scheme> Format<S> {
+    pub(crate) fn new(tokens: Vec<FormatToken>, regex: OnceCell<Regex>) -> Self {
         Self {
             tokens,
             regex,
-            scheme,
+            scheme: PhantomData,
         }
     }
 
-    pub(crate) fn from_tokens(tokens: Vec<FormatToken>, scheme: S) -> Self {
-        Self::new(tokens, OnceCell::new(), scheme)
+    pub(crate) fn from_tokens(tokens: Vec<FormatToken>) -> Self {
+        Self::new(tokens, OnceCell::new())
     }
 
     /// Get the regex pattern for this format. Caches the regex if it hasn't been created yet.
@@ -245,11 +175,12 @@ impl <S:Scheme> Format<S> {
         let mut format = format_str;
         let mut parse_state = ParseState::new();
         let mut tokens = vec![];
+        let mut last_spec = None;
 
         while !format.is_empty() {
             let matched_spec = 'spec_find: {
                 for spec in ALL {
-                    let format_pattern = spec.format_pattern;
+                    let format_pattern = spec.format_pattern();
                     if format.starts_with(format_pattern) {
                         format = &format[format_pattern.len()..];
                         break 'spec_find Some(spec);
@@ -262,6 +193,7 @@ impl <S:Scheme> Format<S> {
                 // check that specifiers are in order]
                 scheme.advance_parse_state(&mut parse_state, spec)?;
                 tokens.push(FormatToken::Specifier(spec));
+                last_spec = Some(spec);
             } else {
                 // check if its escaped brackets, an unknown/unterminated specifier, or finally,
                 // just a literal.
@@ -304,41 +236,42 @@ impl <S:Scheme> Format<S> {
             }
         }
 
-        Ok(Self::from_tokens(tokens, scheme))
+        if let Some(last_spec) = last_spec {
+            if !scheme.parse_state_is_final(&parse_state) {
+                return Err(VersionBumpError::FormatIncomplete { last_spec });
+            }
+        } else {
+            return Err(VersionBumpError::NoSpecifiersInFormat);
+        }
+
+        Ok(Self::from_tokens(tokens))
     }
 
-    // pub fn parse_semantic(format_str: &str) -> Result<Self, VersionBumpError> {
-    //     let scheme = Sem;
-    //     let tokens = Self::parse_tokens(format_str, &scheme)?;
-    //     Self::from_tokens(tokens, scheme)
-    // }
+    pub fn parse_version(&self, version_str: &str) -> Result<Version<S>, VersionBumpError> {
+        Version::parse(version_str, self)
+    }
 }
 
-impl <S:Scheme> PartialEq for Format<S> {
+impl<S: Scheme> PartialEq for Format<S> {
     /// Returns true if the two formats would have the same string representation.
     fn eq(&self, other: &Self) -> bool {
         self.tokens == other.tokens
     }
 }
 
-impl <S:Scheme> fmt::Display for Format<S> {
+impl<S: Scheme> fmt::Display for Format<S> {
     /// Display a format as a string.
     ///
     /// # Example
     ///
     /// ```
-    /// use version_bump::Format;
-    ///
-    /// let format_str = "[YYYY].[MINOR].[PATCH]";
-    /// let format = Format::parse(format_str).unwrap();
-    /// assert_eq!(format_str, format.to_string());
     /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let format_string = self
             .tokens
             .iter()
             .map(|token| match token {
-                FormatToken::Specifier(specifier) => specifier.format_pattern,
+                FormatToken::Specifier(specifier) => specifier.format_pattern(),
                 FormatToken::Literal(text) => text,
             })
             .collect::<Vec<_>>()
@@ -351,157 +284,368 @@ impl <S:Scheme> fmt::Display for Format<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{scheme::{Sem, Cal, CalSem}, specifier::{
-        FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_DAY, SHORT_MONTH, SHORT_WEEK, SHORT_YEAR,
-        ZERO_PADDED_DAY, ZERO_PADDED_MONTH, ZERO_PADDED_WEEK, ZERO_PADDED_YEAR,
-    }};
+    use crate::{
+        scheme::{Cal, CalSem, Scheme, Sem}, specifier::{
+            FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_DAY, SHORT_MONTH, SHORT_WEEK, SHORT_YEAR, YEAR_FORMAT_STRINGS, ZERO_PADDED_DAY, ZERO_PADDED_MONTH, ZERO_PADDED_WEEK, ZERO_PADDED_YEAR
+        }
+    };
+    use itertools::Itertools;
+    use rstest::*;
+    use std::iter;
+
+    // a vec of tuples of (specifier, pattern)
+    // while we could just derive the pattern from the specifier, i want this to be an explicit
+    // value so that we can test patterns are what we expect them to be.
+    type SpecifierTupleVec = Vec<(&'static Specifier, &'static str)>;
+
+    #[fixture]
+    fn years() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
+        iter::once(vec![
+            (&FULL_YEAR, "[YYYY]"),
+            (&SHORT_YEAR, "[YY]"),
+            (&ZERO_PADDED_YEAR, "[0Y]"),
+        ])
+    }
+
+    #[fixture]
+    fn months() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
+        iter::once(vec![(&SHORT_MONTH, "[MM]"), (&ZERO_PADDED_MONTH, "[0M]")])
+    }
+
+    #[fixture]
+    fn weeks() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
+        iter::once(vec![(&SHORT_WEEK, "[WW]"), (&ZERO_PADDED_WEEK, "[0W]")])
+    }
+
+    #[fixture]
+    fn days() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
+        iter::once(vec![(&SHORT_DAY, "[DD]"), (&ZERO_PADDED_DAY, "[0D]")])
+    }
+
+    /// Returns an iterator of two-tuples of (specifier, pattern) for all valid calendar specifiers.
+    ///
+    /// These are:
+    ///
+    /// - `[<year>]`
+    /// - `[<year>]`, `[<month>]`
+    /// - `[<year>]`, `[<month>]`, `[<day>]`
+    /// - `[<year>]`, `[<week>]`
+    ///
+    /// E.g., eliding the specifiers:
+    ///
+    /// - `[YYYY]`
+    /// - `[YY]`
+    /// - `[0Y]`
+    /// - `[YYYY]`, `[MM]`
+    /// - `[YYYY]`, `[0M]`
+    /// - `[YY]`, `[MM]`
+    /// - `[YY]`, `[0M]`
+    /// - `[0Y]`, `[MM]`
+    /// - `[0Y]`, `[0M]`
+    /// - `[YYYY]`, `[MM]`, `[DD]`
+    /// - `[YYYY]`, `[MM]`, `[0D]`
+    /// and so on.
+    #[fixture]
+    fn all_calendar_specs_product(
+        years: impl Iterator<Item = SpecifierTupleVec> + Clone,
+        months: impl Iterator<Item = SpecifierTupleVec> + Clone,
+        weeks: impl Iterator<Item = SpecifierTupleVec> + Clone,
+        days: impl Iterator<Item = SpecifierTupleVec> + Clone,
+    ) -> impl Iterator<Item = SpecifierTupleVec> {
+        let years_product = years.clone().multi_cartesian_product();
+        let years_months_product = years
+            .clone()
+            .chain(months.clone())
+            .multi_cartesian_product();
+        let years_months_days_product = years
+            .clone()
+            .chain(months)
+            .chain(days)
+            .multi_cartesian_product();
+        let years_weeks_product = years.chain(weeks).multi_cartesian_product();
+
+        years_product
+            .chain(years_months_product)
+            .chain(years_months_days_product)
+            .chain(years_weeks_product)
+    }
 
     #[test]
-    fn test_parse_ok() {
-        let format_string = "[YYYY].[MINOR]-[PATCH]";
-        let format: Result<Format<CalSem>, VersionBumpError> = CalSem::new_format(format_string);
+    fn test_literal() {
+        let literal_front = "the quick brown fox jumps over the lazy dog";
+        let literal_middle = "more text";
+        let literal_back = "the end";
+        let format_string = format!("{literal_front}[MAJOR]{literal_middle}[MINOR]{literal_back}");
+        let format = Sem::new_format(&format_string);
         assert_eq!(
             Ok(vec![
-                FormatToken::Specifier(&FULL_YEAR),
-                FormatToken::Literal(".".to_string()),
+                FormatToken::Literal(literal_front.to_string()),
+                FormatToken::Specifier(&MAJOR),
+                FormatToken::Literal(literal_middle.to_string()),
                 FormatToken::Specifier(&MINOR),
-                FormatToken::Literal("-".to_string()),
-                FormatToken::Specifier(&PATCH),
+                FormatToken::Literal(literal_back.to_string()),
             ]),
             format.map(|f| f.tokens)
         );
     }
 
-    // #[test]
-    // fn test_all_specs() {
-    //     let formats = vec![
-    //         ("[MAJOR][MINOR][PATCH]", vec![&MAJOR, &MINOR, &PATCH]),
-    //         ("[YYYY][MM][DD]", vec![&FULL_YEAR, &SHORT_MONTH, &SHORT_DAY]),
-    //         (
-    //             "[YY][0M][0D]",
-    //             vec![&SHORT_YEAR, &ZERO_PADDED_MONTH, &ZERO_PADDED_DAY],
-    //         ),
-    //         ("[0Y][WW]", vec![&ZERO_PADDED_YEAR, &SHORT_WEEK]),
-    //         ("[YYYY][0W]", vec![&FULL_YEAR, &ZERO_PADDED_WEEK]),
-    //     ];
+    /// test all semantic formats. these are:
+    ///
+    /// - `[MAJOR]`
+    /// - `[MAJOR]`, `[MINOR]`
+    /// - `[MAJOR]`, `[MINOR]`, `[PATCH]`
+    #[test]
+    fn test_semantic_parse_ok() {
+        let args = [
+            ("[MAJOR][MINOR][PATCH]", vec![&MAJOR, &MINOR, &PATCH]),
+            ("[MAJOR][MINOR]", vec![&MAJOR, &MINOR]),
+            ("[MAJOR]", vec![&MAJOR]),
+        ];
 
-    //     for (format, spec) in formats {
-    //         let tokens = spec
-    //             .iter()
-    //             .map(|spec| FormatToken::Specifier(spec))
-    //             .collect();
-    //         let actual = Format::parse(format);
-    //         assert_eq!(
-    //             Ok(Format {
-    //                 tokens,
-    //                 regex: OnceCell::new(),
-    //             }),
-    //             actual
-    //         );
-    //     }
-    // }
+        for (format_string, spec) in args {
+            let tokens = spec
+                .iter()
+                .map(|spec| FormatToken::Specifier(spec))
+                .collect();
+            let actual = Sem::new_format(format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    // #[test]
-    // fn test_consecutive_literal() {
-    //     let format = Format::parse("[MAJOR].foo.[MINOR]");
-    //     assert_eq!(
-    //         Ok(Format {
-    //             tokens: vec![
-    //                 FormatToken::Specifier(&MAJOR),
-    //                 FormatToken::Literal(".foo.".to_string()),
-    //                 FormatToken::Specifier(&MINOR),
-    //             ],
-    //             regex: OnceCell::new(),
-    //         }),
-    //         format
-    //     );
-    // }
+    /// test all calendar formats. these are:
+    ///
+    /// - `[<year>]`
+    /// - `[<year>]`, `[<month>]`
+    /// - `[<year>]`, `[<month>]`, `[<day>]`
+    /// - `[<year>]`, `[<week>]`
+    #[rstest]
+    fn test_calendar_parse_ok(all_calendar_specs_product: impl Iterator<Item = SpecifierTupleVec>) {
+        for spec_sequence in all_calendar_specs_product {
+            let mut format_string = String::new();
+            let mut tokens = vec![];
+            for (spec, pattern) in spec_sequence {
+                format_string.push_str(pattern);
+                tokens.push(FormatToken::Specifier(spec));
+            }
+            let actual = Cal::new_format(&format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    // #[test]
-    // fn test_disordered_format() {
-    //     use VersionBumpError::*;
-    //     // these cases are non-exhaustive, but should be sufficient to test the logic
-    //     #[rustfmt::skip]
-    //     let args = [
-    //         ("[MINOR]", NonCyclicSpecifierNotFirst { spec: "[MINOR]" }),
-    //         ("[PATCH]", NonCyclicSpecifierNotFirst { spec: "[PATCH]" }),
-    //         ("[MM]", NonCyclicSpecifierNotFirst { spec: "[MM]" } ),
-    //         ("[WW]", NonCyclicSpecifierNotFirst { spec: "[WW]" } ),
-    //         ("[DD]", NonCyclicSpecifierNotFirst { spec: "[DD]" } ),
-    //         ("[YYYY][MAJOR]", NonCyclicSpecifierNotFirst { spec: "[MAJOR]" } ),
+    /// test all calendar-semantic formats. these are:
+    ///
+    /// - `[<year>]`, `[MINOR]`
+    /// - `[<year>]`, `[MINOR]`, `[PATCH]`
+    /// - `[<year>]`, `[PATCH]`
+    /// - `[<year>]`, `[<month>]`, `[MINOR]`
+    /// - `[<year>]`, `[<month>]`, `[MINOR]`, `[PATCH]`
+    /// - `[<year>]`, `[<month>]`, `[PATCH]`
+    /// - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`
+    /// - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`, `[PATCH]`
+    /// - `[<year>]`, `[<month>]`, `[<day>]`, `[PATCH]`
+    /// - `[<year>]`, `[<week>]`, `[MINOR]`
+    /// - `[<year>]`, `[<week>]`, `[MINOR]`, `[PATCH]`
+    /// - `[<year>]`, `[<week>]`, `[PATCH]`
+    #[rstest]
+    fn test_calendar_semantic_parse_ok(
+        all_calendar_specs_product: impl Iterator<Item = SpecifierTupleVec>,
+    ) {
+        let all_with_semantic_suffixes = all_calendar_specs_product.flat_map(|i| {
+            vec![
+                [i.clone(), vec![(&MINOR, "[MINOR]")]].concat(),
+                [
+                    i.clone(),
+                    vec![(&MINOR, "[MINOR]")],
+                    vec![(&PATCH, "[PATCH]")],
+                ]
+                .concat(),
+                [i, vec![(&PATCH, "[PATCH]")]].concat(),
+            ]
+        });
 
-    //         ("[MAJOR][MAJOR]", SpecifiersMustStrictlyDecrease { prev_spec: "[MAJOR]", next_spec: "[MAJOR]" }),
-    //         ("[MAJOR][MINOR][MINOR]", SpecifiersMustStrictlyDecrease { prev_spec: "[MINOR]", next_spec: "[MINOR]" }),
-    //         ("[MAJOR][PATCH][MINOR]", SpecifiersMustStrictlyDecrease { prev_spec: "[PATCH]", next_spec: "[MINOR]" }),
-    //         ("[YYYY][YYYY]", SpecifiersMustStrictlyDecrease { prev_spec: "[YYYY]", next_spec: "[YYYY]" }),
-    //         ("[YYYY][MM][MM]", SpecifiersMustStrictlyDecrease { prev_spec: "[MM]", next_spec: "[MM]" }),
-    //         ("[YYYY][DD][MM]", SpecifiersMustStrictlyDecrease { prev_spec: "[DD]", next_spec: "[MM]" }),
-    //         ("[YYYY][MM][WW]", SpecifiersMustStrictlyDecrease { prev_spec: "[MM]", next_spec: "[WW]" }),
-    //         ("[YYYY][WW][DD]", SpecifiersMustStrictlyDecrease { prev_spec: "[WW]", next_spec: "[DD]" }),
+        for spec_sequence in all_with_semantic_suffixes {
+            let mut format_string = String::new();
+            let mut tokens = vec![];
+            for (spec, pattern) in spec_sequence {
+                format_string.push_str(pattern);
+                tokens.push(FormatToken::Specifier(spec));
+            }
+            let actual = CalSem::new_format(&format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    //         ("[MAJOR][YYYY]", CalenderMustPrecedeSemantic { prev_spec: "[MAJOR]", next_spec: "[YYYY]" }),
-    //         ("[MAJOR][MM]", CalenderMustPrecedeSemantic { prev_spec: "[MAJOR]", next_spec: "[MM]" }),
-    //         ("[MAJOR][WW]", CalenderMustPrecedeSemantic { prev_spec: "[MAJOR]", next_spec: "[WW]" }),
-    //         ("[MAJOR][DD]", CalenderMustPrecedeSemantic { prev_spec: "[MAJOR]", next_spec: "[DD]" }),
-    //     ];
+    #[test]
+    fn test_bad_semantic_format() {
+        use VersionBumpError::*;
 
-    //     for (format, err) in args {
-    //         let actual = Format::parse(format);
-    //         assert_eq!(Err(err), actual);
-    //     }
-    // }
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[MINOR]",
+                WrongFirstSpecifier {
+                    spec: &MINOR,
+                    scheme_name: Sem.name(),
+                    expected_first: "[MAJOR]",
+                },
+            ),
+            (
+                "[MAJOR][MAJOR]",
+                SpecifiersMustStrictlyDecrease {
+                    prev: &MAJOR,
+                    next: &MAJOR,
+                },
+            ),
+            (
+                "[MAJOR][PATCH]",
+                SpecifierMustBeRelative {
+                    prev: &MAJOR,
+                    next: &PATCH,
+                },
+            ),
+            (
+                "[MAJOR][YYYY]",
+                UnacceptableSpecifier {
+                    spec: &FULL_YEAR,
+                    scheme_name: Sem.name(),
+                },
+            ),
+        ];
 
-    // #[test]
-    // fn test_bracket_escape() {
-    //     let format = r"[YYYY]\[YYYY]";
-    //     let actual = Format::parse(format);
-    //     assert_eq!(
-    //         Ok(Format {
-    //             tokens: vec![
-    //                 FormatToken::Specifier(&FULL_YEAR),
-    //                 FormatToken::Literal("[YYYY]".to_string()),
-    //             ],
-    //             regex: OnceCell::new(),
-    //         }),
-    //         actual
-    //     );
-    // }
+        for (format, err) in args {
+            let actual = Sem::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
 
-    // #[test]
-    // fn test_unknown_specifier() {
-    //     let formats = ["[foo]", "[]", "[]]"];
-    //     for format in formats {
-    //         let actual = Format::parse(format);
-    //         assert!(matches!(
-    //             actual,
-    //             Err(VersionBumpError::UnknownSpecifier { .. })
-    //         ));
-    //     }
-    // }
+    #[test]
+    fn test_bad_calendar_format() {
+        use VersionBumpError::*;
 
-    // #[test]
-    // fn test_unterminated_specifier() {
-    //     let formats = ["[foo", "[", "[major"];
-    //     for format in formats {
-    //         let actual = Format::parse(format);
-    //         assert_eq!(
-    //             actual,
-    //             Err(VersionBumpError::UnterminatedSpecifier {
-    //                 pattern: format.to_owned(),
-    //             })
-    //         )
-    //     }
-    // }
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[YYYY][MINOR]",
+                UnacceptableSpecifier {
+                    spec: &MINOR,
+                    scheme_name: Cal.name(),
+                },
+            ),
+            (
+                "[YYYY][MM][WW]",
+                SpecifierMustBeRelative {
+                    prev: &SHORT_MONTH,
+                    next: &SHORT_WEEK,
+                },
+            ),
+            (
+                "[YYYY][DD]",
+                SpecifiersMustStrictlyDecrease {
+                    prev: &FULL_YEAR,
+                    next: &SHORT_DAY,
+                },
+            ),
+            (
+                "[MM]",
+                WrongFirstSpecifier {
+                    spec: &SHORT_MONTH,
+                    scheme_name: Cal.name(),
+                    expected_first: &YEAR_FORMAT_STRINGS,
+                },
+            ),
+        ];
 
-    // #[test]
-    // fn test_empty() {
-    //     let actual = Format::parse("");
-    //     assert_eq!(
-    //         Ok(Format {
-    //             tokens: vec![],
-    //             regex: OnceCell::new(),
-    //         }),
-    //         actual
-    //     );
-    // }
+        for (format, err) in args {
+            let actual = Cal::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
+
+    #[test]
+    fn test_bad_calendar_semantic_format() {
+        use VersionBumpError::*;
+
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[YYYY]",
+                FormatIncomplete {
+                    last_spec: &FULL_YEAR,
+                },
+            ),
+            ("[YYYY][MAJOR]", MajorInCalSemFormat),
+            (
+                "[MM]",
+                WrongFirstSpecifier {
+                    spec: &SHORT_MONTH,
+                    scheme_name: CalSem.name(),
+                    expected_first: &YEAR_FORMAT_STRINGS,
+                },
+            ),
+            (
+                "[YYYY][MM][WW][PATCH]",
+                SpecifierMustBeRelative {
+                    prev: &SHORT_MONTH,
+                    next: &SHORT_WEEK,
+                },
+            ),
+            (
+                "[YYYY][DD][MINOR]",
+                SpecifierMustBeRelative {
+                    prev: &FULL_YEAR,
+                    next: &SHORT_DAY,
+                },
+            ),
+        ];
+
+        for (format, err) in args {
+            let actual = CalSem::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
+
+    #[test]
+    fn test_bracket_escape() {
+        let format = r"[YYYY]\[YYYY]";
+        let actual = Cal::new_format(format);
+        assert_eq!(
+            Ok(vec![
+                FormatToken::Specifier(&FULL_YEAR),
+                FormatToken::Literal("[YYYY]".to_string()),
+            ]),
+            actual.map(|f| f.tokens)
+        );
+    }
+
+    #[test]
+    fn test_unknown_specifier() {
+        let formats = ["[foo]", "[]", "[]]"];
+        for format in formats {
+            let actual = Sem::new_format(format);
+            assert!(matches!(
+                actual,
+                Err(VersionBumpError::UnknownSpecifier { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn test_unterminated_specifier() {
+        let formats = ["[foo", "[", "[major"];
+        for format in formats {
+            let actual = Sem::new_format(format);
+            assert_eq!(
+                actual,
+                Err(VersionBumpError::UnterminatedSpecifier {
+                    pattern: format.to_owned(),
+                })
+            )
+        }
+    }
 }

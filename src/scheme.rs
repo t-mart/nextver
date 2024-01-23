@@ -1,48 +1,76 @@
 use crate::format::ParseState;
 use crate::specifier::{
-    Specifier, Type, FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_YEAR, ZERO_PADDED_YEAR,
+    CalendarSpecifier, SemanticSpecifier, Specifier, MAJOR, MINOR, PATCH, YEAR_FORMAT_STRINGS,
 };
-use crate::{Format, VersionBumpError};
+use crate::{Format, Version, VersionBumpError};
+use core::fmt::Debug;
 
-// TODO: use downcast_rs to go from trait object to concrete type in CLI
+pub(crate) mod priv_trait {
+    use super::*;
+    pub(crate) trait Scheme: Sized + Debug {
+        /// Returns a human readable string of the first specifier(s) that should be present in the
+        /// format string. Used for error messages.
+        fn expected_first(&self) -> &'static str;
 
-pub trait Scheme: Sized {
-    /// Returns the name of the scheme for error messages.
-    fn name(&self) -> &'static str;
+        /// Advances the parse state according to the next specifier.
+        fn advance_parse_state(
+            &self,
+            parse_state: &mut ParseState,
+            next: &'static Specifier,
+        ) -> Result<(), VersionBumpError>;
 
-    /// Returns a human readable string of the first specifier(s) that should be present in the
-    /// format string. Used for error messages.
-    fn expected_first(&self) -> String;
-
-    /// Advances the parse state according to the next specifier. 
-    fn advance_parse_state(
-        &self,
-        parse_state: &mut ParseState,
-        next: &'static Specifier,
-    ) -> Result<(), VersionBumpError>;
-
-    /// Returns true if the current state is an acceptable final state.
-    /// 
-    /// Note: This must be called! Currently, at least one scheme requires the presence of certain
-    /// specifiers at its end.
-    fn parse_state_is_final(&self, ps: &ParseState) -> bool;
-}
-
-pub struct Sem;
-
-impl Sem {
-    pub fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError> {
-        Format::parse(format_str, Sem)
+        /// Returns true if the current state is an acceptable final state.
+        ///
+        /// Note: This must be called! Currently, at least one scheme requires the presence of certain
+        /// specifiers at its end.
+        fn parse_state_is_final(&self, parse_state: &ParseState) -> bool;
     }
 }
+
+#[allow(private_bounds)]
+pub trait Scheme: priv_trait::Scheme {
+    /// Create a new format from a format string for this scheme.
+    fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError>;
+
+    /// Returns a human readable name of the scheme for error messages.
+    fn name(&self) -> &'static str;
+
+    /// Parses a version string against a format string, and returns a [Version] object if the
+    /// version string matches the format string. Otherwise, returns a [VersionBumpError].
+    ///
+    /// This is a convenience method that creates a temporary [Format] object and parses the version
+    /// string against it.
+    fn new_version(format_str: &str, version_str: &str) -> Result<Version<Self>, VersionBumpError> {
+        let format = Self::new_format(format_str)?;
+        let version = Version::parse(version_str, &format)?;
+        Ok(version)
+    }
+
+    /// Returns `true` if the given version string is valid for the given format string.
+    ///
+    /// This is a convenience method that creates a temporary [Format] object and validates that the
+    /// version string matches it.
+    fn is_valid(format_str: &str, version_str: &str) -> bool {
+        Self::new_version(format_str, version_str).is_ok()
+    }
+}
+
+#[derive(Debug)]
+pub struct Sem;
 
 impl Scheme for Sem {
     fn name(&self) -> &'static str {
         "semantic"
     }
 
-    fn expected_first(&self) -> String {
-        MAJOR.to_string()
+    fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError> {
+        Format::parse(format_str, Sem)
+    }
+}
+
+impl priv_trait::Scheme for Sem {
+    fn expected_first(&self) -> &'static str {
+        MAJOR.format_pattern()
     }
 
     fn advance_parse_state(
@@ -53,72 +81,74 @@ impl Scheme for Sem {
         use ParseState::*;
         use VersionBumpError::*;
 
-        if !matches!(next, Specifier::Semantic { .. }) {
+        let Specifier::Semantic(next_sem) = next else {
             return Err(UnacceptableSpecifier {
                 spec: next,
-                scheme_name: self.name().to_owned(),
+                scheme_name: self.name(),
             });
-        }
+        };
 
-        let type_ = &next.type_;
+        // let type_ = &next.type_;
         *parse_state = match parse_state {
-            Initial => match type_ {
-                Type::Major => Major,
+            Initial => match next_sem {
+                SemanticSpecifier::Major => Major,
                 _ => {
                     return Err(WrongFirstSpecifier {
                         spec: next,
-                        scheme_name: self.name().to_owned(),
+                        scheme_name: self.name(),
                         expected_first: self.expected_first(),
                     })
                 }
             },
-            Major => match type_ {
-                Type::Major => {
+            Major => match next_sem {
+                SemanticSpecifier::Major => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &MAJOR,
                         next: &MAJOR,
                     })
                 }
-                Type::Minor => Minor,
-                Type::Patch => Patch,
-                _ => unreachable!(),
+                SemanticSpecifier::Minor => Minor,
+                SemanticSpecifier::Patch => {
+                    return Err(SpecifierMustBeRelative {
+                        prev: &MAJOR,
+                        next: &PATCH,
+                    })
+                }
             },
-            Minor => match type_ {
-                Type::Major => {
+            Minor => match next_sem {
+                SemanticSpecifier::Major => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &MINOR,
                         next: &MAJOR,
                     })
                 }
-                Type::Minor => {
+                SemanticSpecifier::Minor => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &MINOR,
                         next: &MINOR,
                     })
                 }
-                Type::Patch => Patch,
-                _ => unreachable!(),
+                SemanticSpecifier::Patch => Patch,
             },
-            Patch => match type_ {
-                Type::Major => {
+            Patch => match next_sem {
+                SemanticSpecifier::Major => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &PATCH,
                         next: &MAJOR,
                     })
                 }
-                Type::Minor => {
+                SemanticSpecifier::Minor => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &PATCH,
                         next: &MINOR,
                     })
                 }
-                Type::Patch => {
+                SemanticSpecifier::Patch => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: &PATCH,
                         next: &PATCH,
                     })
                 }
-                _ => unreachable!(),
             },
             _ => unreachable!(),
         };
@@ -130,28 +160,22 @@ impl Scheme for Sem {
     }
 }
 
-fn cal_expected_first() -> String {
-    [&ZERO_PADDED_YEAR, &SHORT_YEAR, &FULL_YEAR]
-        .iter()
-        .map(|spec| spec.format_pattern)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
+#[derive(Debug)]
 pub struct Cal;
-
-impl Cal {
-    pub fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError> {
-        Format::parse(format_str, Cal)
-    }
-}
 
 impl Scheme for Cal {
     fn name(&self) -> &'static str {
         "calendar"
     }
 
-    fn expected_first(&self) -> String {
-        cal_expected_first()
+    fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError> {
+        Format::parse(format_str, Cal)
+    }
+}
+
+impl priv_trait::Scheme for Cal {
+    fn expected_first(&self) -> &'static str {
+        &YEAR_FORMAT_STRINGS
     }
 
     fn advance_parse_state(
@@ -162,75 +186,75 @@ impl Scheme for Cal {
         use ParseState::*;
         use VersionBumpError::*;
 
-        if !matches!(next, Specifier::Calendar { .. }) {
+        let Specifier::Calendar(next_cal) = next else {
             return Err(UnacceptableSpecifier {
                 spec: next,
-                scheme_name: self.name().to_owned(),
+                scheme_name: self.name(),
             });
-        }
+        };
 
-        let type_ = &next.type_;
         *parse_state = match parse_state {
-            Initial => match type_ {
-                Type::Year => Year(next),
+            Initial => match next_cal {
+                CalendarSpecifier::Year { .. } => Year(next),
                 _ => {
                     return Err(WrongFirstSpecifier {
                         spec: next,
-                        scheme_name: self.name().to_owned(),
+                        scheme_name: self.name(),
                         expected_first: self.expected_first(),
                     })
                 }
             },
-            Year(last_year) => match type_ {
-                Type::Year | Type::Day => {
+            Year(last_year) => match next_cal {
+                CalendarSpecifier::Year { .. } | CalendarSpecifier::Day { .. } => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: last_year,
                         next,
                     })
                 }
-                Type::Month => Month(next),
-                Type::Week => Week(next),
-                _ => unreachable!(),
+                CalendarSpecifier::Month { .. } => Month(next),
+                CalendarSpecifier::Week { .. } => Week(next),
             },
-            Month(last_month) => match type_ {
-                Type::Year | Type::Month => {
+            Month(last_month) => match next_cal {
+                CalendarSpecifier::Year { .. } | CalendarSpecifier::Month { .. } => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: last_month,
                         next,
                     })
                 }
-                Type::Week => {
+                CalendarSpecifier::Week { .. } => {
                     return Err(SpecifierMustBeRelative {
                         prev: last_month,
                         next,
                     })
                 }
-                Type::Day => Day(next),
-                _ => unreachable!(),
+                CalendarSpecifier::Day { .. } => Day(next),
             },
-            Week(last_week) => match type_ {
-                Type::Year | Type::Month | Type::Week => {
+            Week(last_week) => match next_cal {
+                CalendarSpecifier::Year { .. }
+                | CalendarSpecifier::Month { .. }
+                | CalendarSpecifier::Week { .. } => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: last_week,
                         next,
                     })
                 }
-                Type::Day => {
+                CalendarSpecifier::Day { .. } => {
                     return Err(SpecifierMustBeRelative {
                         prev: last_week,
                         next,
                     })
                 }
-                _ => unreachable!(),
             },
-            Day(last_day) => match type_ {
-                Type::Year | Type::Month | Type::Week | Type::Day => {
+            Day(last_day) => match next_cal {
+                CalendarSpecifier::Year { .. }
+                | CalendarSpecifier::Month { .. }
+                | CalendarSpecifier::Week { .. }
+                | CalendarSpecifier::Day { .. } => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: last_day,
                         next,
                     })
                 }
-                _ => unreachable!(),
             },
             _ => unreachable!(),
         };
@@ -242,6 +266,11 @@ impl Scheme for Cal {
     }
 }
 
+/// This method is designed for formats that have both calendar and semantic specifiers, such as
+/// `[YYYY].[MM].[DD].[PATCH]`. You would have such a format if you want to be able to increase
+/// your version multiple times within the period of your smallest calendar specifier, such a
+/// second time in the same day, continuing with the previous example.
+#[derive(Debug)]
 pub struct CalSem;
 
 impl CalSem {
@@ -255,8 +284,14 @@ impl Scheme for CalSem {
         "calendar-semantic"
     }
 
-    fn expected_first(&self) -> String {
-        format!("{}, {}", cal_expected_first(), MAJOR)
+    fn new_format(format_str: &str) -> Result<Format<Self>, VersionBumpError> {
+        Format::parse(format_str, CalSem)
+    }
+}
+
+impl priv_trait::Scheme for CalSem {
+    fn expected_first(&self) -> &'static str {
+        &YEAR_FORMAT_STRINGS
     }
 
     fn advance_parse_state(
@@ -266,139 +301,145 @@ impl Scheme for CalSem {
     ) -> Result<(), VersionBumpError> {
         use ParseState::*;
         use VersionBumpError::*;
-        
-        let type_ = &next.type_;
         *parse_state = match parse_state {
-            Initial => match type_ {
-                Type::Year => Year(next),
+            Initial => match next {
+                Specifier::Calendar(CalendarSpecifier::Year { .. }) => Year(next),
                 _ => {
                     return Err(WrongFirstSpecifier {
                         spec: next,
-                        scheme_name: self.name().to_string(),
+                        scheme_name: self.name(),
                         expected_first: self.expected_first(),
                     })
                 }
             },
-            Year(last_year) => match type_ {
-                Type::Year => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: last_year,
-                        next,
-                    })
-                }
-                Type::Month => Month(next),
-                Type::Week => Week(next),
-                Type::Day => {
-                    return Err(SpecifierMustBeRelative {
-                        prev: last_year,
-                        next,
-                    })
-                }
-                Type::Major => {
-                    return Err(MajorInCalSemFormat {
-                        spec: &MAJOR,
-                        scheme_name: self.name().to_string(),
-                    });
-                }
-                Type::Minor => Minor,
-                Type::Patch => Patch,
+            Year(last_year) => match next {
+                Specifier::Calendar(next_cal) => match next_cal {
+                    CalendarSpecifier::Year { .. } => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: last_year,
+                            next,
+                        })
+                    }
+                    CalendarSpecifier::Month { .. } => Month(next),
+                    CalendarSpecifier::Week { .. } => Week(next),
+                    CalendarSpecifier::Day { .. } => {
+                        return Err(SpecifierMustBeRelative {
+                            prev: last_year,
+                            next,
+                        })
+                    }
+                },
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(MajorInCalSemFormat);
+                    }
+                    SemanticSpecifier::Minor => Minor,
+                    SemanticSpecifier::Patch => Patch,
+                },
             },
-            Month(last_month) => match type_ {
-                Type::Year | Type::Month => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: last_month,
-                        next,
-                    })
-                }
-                Type::Week => {
-                    return Err(SpecifierMustBeRelative {
-                        prev: last_month,
-                        next,
-                    })
-                }
-                Type::Day => Day(next),
-                Type::Major => {
-                    return Err(MajorInCalSemFormat {
-                        spec: &MAJOR,
-                        scheme_name: self.name().to_string(),
-                    });
-                }
-                Type::Minor => Minor,
-                Type::Patch => Patch,
+            Month(last_month) => match next {
+                Specifier::Calendar(next_cal) => match next_cal {
+                    CalendarSpecifier::Year { .. } | CalendarSpecifier::Month { .. } => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: last_month,
+                            next,
+                        })
+                    }
+                    CalendarSpecifier::Week { .. } => {
+                        return Err(SpecifierMustBeRelative {
+                            prev: last_month,
+                            next,
+                        })
+                    }
+                    CalendarSpecifier::Day { .. } => Day(next),
+                },
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(MajorInCalSemFormat);
+                    }
+                    SemanticSpecifier::Minor => Minor,
+                    SemanticSpecifier::Patch => Patch,
+                },
             },
-            Week(last_week) => match type_ {
-                Type::Year | Type::Month | Type::Week => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: last_week,
-                        next,
-                    })
-                }
-                Type::Day => {
-                    return Err(SpecifierMustBeRelative {
-                        prev: last_week,
-                        next,
-                    })
-                }
-                Type::Major => {
-                    return Err(MajorInCalSemFormat {
-                        spec: &MAJOR,
-                        scheme_name: self.name().to_string(),
-                    });
-                }
-                Type::Minor => Minor,
-                Type::Patch => Patch,
+            Week(last_week) => match next {
+                Specifier::Calendar(next_cal) => match next_cal {
+                    CalendarSpecifier::Year { .. }
+                    | CalendarSpecifier::Month { .. }
+                    | CalendarSpecifier::Week { .. } => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: last_week,
+                            next,
+                        })
+                    }
+                    CalendarSpecifier::Day { .. } => {
+                        return Err(SpecifierMustBeRelative {
+                            prev: last_week,
+                            next,
+                        })
+                    }
+                },
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(MajorInCalSemFormat);
+                    }
+                    SemanticSpecifier::Minor => Minor,
+                    SemanticSpecifier::Patch => Patch,
+                },
             },
-            Day(last_day) => match type_ {
-                Type::Year | Type::Month | Type::Week | Type::Day => {
+            Day(last_day) => match next {
+                Specifier::Calendar(..) => {
                     return Err(SpecifiersMustStrictlyDecrease {
                         prev: last_day,
                         next,
-                    })
-                }
-                Type::Major => {
-                    return Err(MajorInCalSemFormat {
-                        spec: &MAJOR,
-                        scheme_name: self.name().to_string(),
                     });
                 }
-                Type::Minor => Minor,
-                Type::Patch => Patch,
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(MajorInCalSemFormat);
+                    }
+                    SemanticSpecifier::Minor => Minor,
+                    SemanticSpecifier::Patch => Patch,
+                },
             },
-            Minor => match type_ {
-                Type::Major => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: &MINOR,
-                        next: &MAJOR,
-                    })
-                }
-                Type::Minor => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: &MINOR,
-                        next: &MINOR,
-                    })
-                }
-                Type::Patch => Patch,
+            Minor => match next {
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: &MINOR,
+                            next: &MAJOR,
+                        })
+                    }
+                    SemanticSpecifier::Minor => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: &MINOR,
+                            next: &MINOR,
+                        })
+                    }
+                    SemanticSpecifier::Patch => Patch,
+                },
                 _ => return Err(CalenderMustPrecedeSemantic { prev: &MINOR, next }),
             },
-            Patch => match type_ {
-                Type::Major => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: &PATCH,
-                        next: &MAJOR,
-                    })
-                }
-                Type::Minor => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: &PATCH,
-                        next: &MINOR,
-                    })
-                }
-                Type::Patch => {
-                    return Err(SpecifiersMustStrictlyDecrease {
-                        prev: &PATCH,
-                        next: &PATCH,
-                    })
-                }
+            Patch => match next {
+                Specifier::Semantic(next_sem) => match next_sem {
+                    SemanticSpecifier::Major => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: &PATCH,
+                            next: &MAJOR,
+                        })
+                    }
+                    SemanticSpecifier::Minor => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: &PATCH,
+                            next: &MINOR,
+                        })
+                    }
+                    SemanticSpecifier::Patch => {
+                        return Err(SpecifiersMustStrictlyDecrease {
+                            prev: &PATCH,
+                            next: &PATCH,
+                        })
+                    }
+                },
                 _ => return Err(CalenderMustPrecedeSemantic { prev: &PATCH, next }),
             },
             _ => unreachable!(), // for major
@@ -406,8 +447,8 @@ impl Scheme for CalSem {
         Ok(())
     }
 
-    fn parse_state_is_final(&self, ps: &ParseState) -> bool {
+    fn parse_state_is_final(&self, parse_state: &ParseState) -> bool {
         use ParseState::*;
-        matches!(ps, Major | Minor | Patch)
+        matches!(parse_state, Major | Minor | Patch)
     }
 }

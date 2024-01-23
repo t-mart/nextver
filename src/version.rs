@@ -1,9 +1,9 @@
-use chrono::{Datelike, Local, NaiveDate, Utc};
-use core::fmt;
-use std::borrow::Cow;
-use std::cmp::Ordering;
-
+use crate::scheme::{Cal, CalSem, Sem, Scheme};
 use crate::{format::FormatToken, specifier::*, Format, VersionBumpError};
+use chrono::{Datelike, Local, NaiveDate, Utc};
+use core::{fmt, panic};
+use std::cmp::Ordering;
+use std::{borrow::Cow, marker::PhantomData};
 
 /**
 Ways to specify a date
@@ -62,451 +62,479 @@ impl<T: Datelike> From<T> for Date {
     }
 }
 
-// #[derive(Debug, Clone)]
-// pub(crate) enum VersionToken {
-//     Value {
-//         value: u32,
-//         spec: &'static Specifier,
-//     },
-//     Fixed(String),
-// }
+#[derive(Debug, Clone)]
+pub(crate) enum VersionToken {
+    Value {
+        value: u32,
+        spec: &'static Specifier,
+    },
+    Fixed(String),
+}
 
-// impl PartialEq for VersionToken {
-//     fn eq(&self, other: &Self) -> bool {
-//         match (self, other) {
-//             (
-//                 VersionToken::Value {
-//                     value: self_value,
-//                     spec: self_spec,
-//                 },
-//                 VersionToken::Value {
-//                     value: other_value,
-//                     spec: other_spec,
-//                 },
-//             ) => std::ptr::eq(*self_spec, *other_spec) && self_value == other_value,
-//             (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
-//                 self_text == other_text
-//             }
-//             // if the tokens are different types, we can't compare them
-//             _ => false,
-//         }
-//     }
-// }
+impl PartialEq for VersionToken {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                VersionToken::Value {
+                    value: self_value,
+                    spec: self_spec,
+                },
+                VersionToken::Value {
+                    value: other_value,
+                    spec: other_spec,
+                },
+            ) => std::ptr::eq(*self_spec, *other_spec) && self_value == other_value,
+            (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
+                self_text == other_text
+            }
+            // if the tokens are different types, we can't compare them
+            _ => false,
+        }
+    }
+}
 
-// impl PartialOrd for VersionToken {
-//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-//         match (self, other) {
-//             (
-//                 VersionToken::Value {
-//                     value: self_value,
-//                     spec: self_spec,
-//                 },
-//                 VersionToken::Value {
-//                     value: other_value,
-//                     spec: other_spec,
-//                 },
-//             ) => {
-//                 if !std::ptr::eq(*self_spec, *other_spec) {
-//                     return None;
-//                 }
-//                 self_value.partial_cmp(other_value)
-//             }
-//             (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
-//                 self_text.partial_cmp(other_text)
-//             }
-//             // if the tokens are different types, we can't compare them
-//             _ => None,
-//         }
-//     }
-// }
+impl PartialOrd for VersionToken {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (
+                VersionToken::Value {
+                    value: self_value,
+                    spec: self_spec,
+                },
+                VersionToken::Value {
+                    value: other_value,
+                    spec: other_spec,
+                },
+            ) => {
+                if !std::ptr::eq(*self_spec, *other_spec) {
+                    return None;
+                }
+                self_value.partial_cmp(other_value)
+            }
+            (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
+                self_text.partial_cmp(other_text)
+            }
+            // if the tokens are different types, we can't compare them
+            _ => None,
+        }
+    }
+}
 
-// impl From<&VersionToken> for FormatToken {
-//     fn from(val: &VersionToken) -> Self {
-//         match val {
-//             VersionToken::Value { spec, .. } => FormatToken::Specifier(spec),
-//             VersionToken::Fixed(text) => FormatToken::Literal(text.clone()),
-//         }
-//     }
-// }
+impl From<&VersionToken> for FormatToken {
+    fn from(val: &VersionToken) -> Self {
+        match val {
+            VersionToken::Value { spec, .. } => FormatToken::Specifier(spec),
+            VersionToken::Fixed(text) => FormatToken::Literal(text.clone()),
+        }
+    }
+}
 
-// /// A Version object represents the parsing of a version string against a [Format], where specifier
-// /// text is converted into numeric values. Versions can be displayed, incremented, and compared.
-// ///
-// /// Note that Version objects only implement a partial ordering. This is because the ordering
-// /// only makes sense when they have the same format. Therefore, inequality (and equality)
-// /// comparisons between versions with different formats will always return `false`.
-// ///
-// /// # Examples
-// ///
-// /// Quick start:
-// ///
-// /// ```
-// /// use version_bump::{Version, VersionBumpError, SemanticLevel};
-// ///
-// /// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
-// /// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
-// /// assert_eq!("1.3.0", incremented.to_string());
-// /// assert!(version < incremented);
-// ///
-// /// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-// /// assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch {..})));
-// /// ```
-// ///
-// /// Or, use a previously created [Format] object:
-// ///
-// /// ```
-// /// use version_bump::{Format, Version};
-// ///
-// /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
-// /// let version = Version::parse("1.2.3", format.clone());
-// /// assert!(version.is_ok());
-// /// ```
-// ///
-// /// You can increment by semantic level, calendar date, or both:
-// ///
-// /// ```
-// /// use version_bump::{Version, SemanticLevel, Date};
-// ///
-// /// // Mix and match specifiers
-// /// let version = Version::from_parsed_format("[YYYY].[PATCH]", "2023.123").unwrap();
-// ///
-// /// // Increment by semantic level
-// /// let incremented = version.increment(Some(&SemanticLevel::Patch), None).unwrap();
-// /// assert_eq!("2023.124", incremented.to_string());
-// /// assert!(version < incremented);
-// ///
-// /// // Increment by date
-// /// let date = Date::Explicit { year: 2024, month: 2, day: 3 };
-// /// let incremented = version.increment(None, Some(&date)).unwrap();
-// /// assert_eq!("2024.123", incremented.to_string());
-// /// assert!(version < incremented);
-// ///
-// /// // Increment by both
-// /// let incremented = version.increment(Some(&SemanticLevel::Patch), Some(&date)).unwrap();
-// /// assert_eq!("2024.124", incremented.to_string());
-// /// assert!(version < incremented);
-// /// ```
-// #[derive(Debug, PartialEq, PartialOrd)]
-// pub struct Version {
-//     pub(crate) tokens: Vec<VersionToken>,
-// }
+/// A Version object represents the parsing of a version string against a [Format], where specifier
+/// text is converted into numeric values. Versions can be displayed, incremented, and compared.
+///
+/// Note that Version objects only implement a partial ordering. This is because the ordering
+/// only makes sense when they have the same format. Therefore, inequality (and equality)
+/// comparisons between versions with different formats will always return `false`.
+///
+/// # Examples
+///
+/// Quick start:
+///
+/// ```
+/// use version_bump::{Version, VersionBumpError, SemanticLevel};
+///
+/// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
+/// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
+/// assert_eq!("1.3.0", incremented.to_string());
+/// assert!(version < incremented);
+///
+/// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
+/// assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch {..})));
+/// ```
+///
+/// Or, use a previously created [Format] object:
+///
+/// ```
+/// use version_bump::{Format, Version};
+///
+/// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
+/// let version = Version::parse("1.2.3", format.clone());
+/// assert!(version.is_ok());
+/// ```
+///
+/// You can increment by semantic level, calendar date, or both:
+///
+/// ```
+/// use version_bump::{Version, SemanticLevel, Date};
+///
+/// // Mix and match specifiers
+/// let version = Version::from_parsed_format("[YYYY].[PATCH]", "2023.123").unwrap();
+///
+/// // Increment by semantic level
+/// let incremented = version.increment(Some(&SemanticLevel::Patch), None).unwrap();
+/// assert_eq!("2023.124", incremented.to_string());
+/// assert!(version < incremented);
+///
+/// // Increment by date
+/// let date = Date::Explicit { year: 2024, month: 2, day: 3 };
+/// let incremented = version.increment(None, Some(&date)).unwrap();
+/// assert_eq!("2024.123", incremented.to_string());
+/// assert!(version < incremented);
+///
+/// // Increment by both
+/// let incremented = version.increment(Some(&SemanticLevel::Patch), Some(&date)).unwrap();
+/// assert_eq!("2024.124", incremented.to_string());
+/// assert!(version < incremented);
+/// ```
+#[derive(Debug, PartialEq, PartialOrd)]
+pub struct Version<S: Scheme> {
+    pub(crate) tokens: Vec<VersionToken>,
+    scheme: PhantomData<S>,
+}
 
-// impl Version {
-//     /// Parses a version string against a [Format], and returns a [Version] object if the version
-//     /// string matches the format. Otherwise, returns a [VersionBumpError].
-//     ///
-//     /// If you just need a one-off parse or validation, you can use [Version::from_parsed_format] or
-//     /// [Version::is_valid] instead, which create [Format] objects implicitly.
-//     ///
-//     /// Note that calendar specifier values are not validated to be real dates. For example,
-//     /// `2021.2.30` will parse, even though February 30th does not exist. This is because specifiers
-//     /// for the year, month, and day might not exist in the same format string, so a full date may
-//     /// not always be realizable. (However, when incrementing, the date provided will be validated.)
-//     ///
-//     /// # Errors
-//     ///
-//     /// - If the version string does not match the format string, returns a
-//     ///   [VersionBumpError::VersionFormatMismatch].
-//     pub fn parse(version_str: &str, format: Format) -> Result<Self, VersionBumpError> {
-//         let Some(captures) = format.get_regex().captures(version_str) else {
-//             return Err(VersionBumpError::VersionFormatMismatch {
-//                 version_string: version_str.to_owned(),
-//                 format_string: format.to_string(),
-//             });
-//         };
+impl<S: Scheme> Version<S> {
+    pub(crate) fn new(tokens: Vec<VersionToken>) -> Self {
+        Self {
+            tokens,
+            scheme: PhantomData,
+        }
+    }
 
-//         let mut tokens = Vec::new();
+    /// Parses a version string against a [Format], and returns a [Version] object if the version
+    /// string matches the format. Otherwise, returns a [VersionBumpError].
+    ///
+    /// If you just need a one-off parse or validation, you can use [Version::from_parsed_format] or
+    /// [Version::is_valid] instead, which create [Format] objects implicitly.
+    ///
+    /// Note that calendar specifier values are not validated to be real dates. For example,
+    /// `2021.2.30` will parse, even though February 30th does not exist. This is because specifiers
+    /// for the year, month, and day might not exist in the same format string, so a full date may
+    /// not always be realizable. (However, when incrementing, the date provided will be validated.)
+    ///
+    /// # Errors
+    ///
+    /// - If the version string does not match the format string, returns a
+    ///   [VersionBumpError::VersionFormatMismatch].
+    pub(crate) fn parse(version_str: &str, format: &Format<S>) -> Result<Self, VersionBumpError> {
+        let Some(captures) = format.get_regex().captures(version_str) else {
+            return Err(VersionBumpError::VersionFormatMismatch {
+                version_string: version_str.to_owned(),
+                format_string: format.to_string(),
+            });
+        };
 
-//         // skip the first capture because it's the implicit group of the whole regex
-//         let group_captures = captures.iter().skip(1);
+        let mut tokens = Vec::new();
 
-//         for (match_, format_token) in group_captures.zip(&format.tokens) {
-//             let Some(match_) = match_ else {
-//                 // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
-//                 // currently construct our format regex this way, but just in case. Plus we get a
-//                 // destructure on the Option
-//                 continue;
-//             };
+        // skip the first capture because it's the implicit group of the whole regex
+        let group_captures = captures.iter().skip(1);
 
-//             let text = match_.as_str().to_owned();
+        for (match_, format_token) in group_captures.zip(&format.tokens) {
+            let Some(match_) = match_ else {
+                // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
+                // currently construct our format regex this way, but just in case. Plus we get a
+                // destructure on the Option
+                continue;
+            };
 
-//             let token = match format_token {
-//                 FormatToken::Specifier(specifier) => {
-//                     let value = text.parse().unwrap();
-//                     VersionToken::Value {
-//                         value,
-//                         spec: specifier,
-//                     }
-//                 }
-//                 FormatToken::Literal(format_text) => {
-//                     if !text.eq(format_text) {
-//                         return Err(VersionBumpError::VersionFormatMismatch {
-//                             version_string: version_str.to_owned(),
-//                             format_string: format.to_string(),
-//                         });
-//                     }
-//                     VersionToken::Fixed(text)
-//                 }
-//             };
+            let text = match_.as_str().to_owned();
 
-//             tokens.push(token);
-//         }
+            let token = match format_token {
+                FormatToken::Specifier(specifier) => {
+                    let value = text.parse().unwrap();
+                    VersionToken::Value {
+                        value,
+                        spec: specifier,
+                    }
+                }
+                FormatToken::Literal(format_text) => {
+                    if !text.eq(format_text) {
+                        return Err(VersionBumpError::VersionFormatMismatch {
+                            version_string: version_str.to_owned(),
+                            format_string: format.to_string(),
+                        });
+                    }
+                    VersionToken::Fixed(text)
+                }
+            };
 
-//         Ok(Self { tokens })
-//     }
+            tokens.push(token);
+        }
 
-//     fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionBumpError>
-//     where
-//         F: FnMut((&u32, &'static Specifier)) -> Result<u32, VersionBumpError>,
-//     {
-//         let mut new_tokens = Vec::with_capacity(self.tokens.len());
+        Ok(Self {
+            tokens,
+            scheme: PhantomData,
+        })
+    }
 
-//         for token in &self.tokens {
-//             let new_token = match token {
-//                 VersionToken::Value { value, spec } => {
-//                     let new_value = f((value, spec))?;
-//                     VersionToken::Value {
-//                         value: new_value,
-//                         spec,
-//                     }
-//                 }
-//                 _ => token.clone(),
-//             };
-//             new_tokens.push(new_token);
-//         }
+    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionBumpError>
+    where
+        F: FnMut((&u32, &'static Specifier)) -> Result<u32, VersionBumpError>,
+    {
+        let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
-//         Ok(Version { tokens: new_tokens })
-//     }
+        for token in &self.tokens {
+            let new_token = match token {
+                VersionToken::Value { value, spec } => {
+                    let new_value = f((value, spec))?;
+                    VersionToken::Value {
+                        value: new_value,
+                        spec,
+                    }
+                }
+                _ => token.clone(),
+            };
+            new_tokens.push(new_token);
+        }
 
-//     /// Returns a new version where the semantic value of the given [SemanticLevel] is incremented,
-//     /// and all lesser semantic values are reset to zero.
-//     ///
-//     /// It is absolutely ok to call this method if this version contains calendar values — they just
-//     /// won't be updated.
-//     ///
-//     /// # Arguments
-//     ///
-//     /// - `semantic_level`: The semantic level to increment by one. All lesser levels' values will
-//     ///   be reset to zero.
-//     ///
-//     /// # Example
-//     ///
-//     /// ```
-//     /// use version_bump::{Format, SemanticLevel, Version};
-//     ///
-//     /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
-//     /// let version = Version::parse("1.2.3", format).unwrap();
-//     /// let new_version = version.increment(&SemanticLevel::Major).unwrap();
-//     /// assert_eq!("2.0.0", new_version.to_string());
-//     /// assert!(version < new_version);
-//     ///
-//     /// let newer_version = new_version.increment(&SemanticLevel::Patch).unwrap();
-//     /// assert_eq!("2.0.1", newer_version.to_string());
-//     /// assert!(new_version < newer_version);
-//     /// ```
-//     ///
-//     /// # Errors
-//     ///
-//     /// - If `semantic_level` is provided but the format string does not contain its respective
-//     ///   specifier, returns a [VersionBumpError::SemanticLevelSpecifierNotInFormat].
-//     pub fn increment(&self, semantic_level: &SemanticLevel) -> Result<Self, VersionBumpError> {
-//         // track if the semantic level was found in the format string.
-//         let mut sem_level_found = false;
+        Ok(Version::new(new_tokens))
+    }
 
-//         // track if we should increment or reset to 0
-//         let mut sem_already_bumped = false;
+    // /// Compare this version to another version string. This is a convenience method that parses
+    // /// the other version string against the format of this version.
+    // pub fn partial_cmp_with_string(&self, other_version_str: &str) -> Option<Ordering> {
+    //     let other = Self::parse(other_version_str, self.into()).ok()?;
+    //     self.partial_cmp(&other)
+    // }
+}
 
-//         let new_version = self.new_map_value_tokens(|(value, spec)| {
-//             let new_value = if let Specifier::Semantic {
-//                 increment,
-//                 semantic_level: spec_sem_level,
-//                 ..
-//             } = spec
-//             {
-//                 if semantic_level >= spec_sem_level {
-//                     if semantic_level == spec_sem_level {
-//                         sem_level_found = true;
-//                     }
-//                     let incremented = increment(value, sem_already_bumped);
-//                     sem_already_bumped = true;
-//                     incremented
-//                 } else {
-//                     *value
-//                 }
-//             } else {
-//                 // not a semantic specifier, so just return the value
-//                 *value
-//             };
-//             Ok(new_value)
-//         })?;
+impl Version<Sem> {
+    /// Returns a new version where the semantic value of the given [SemanticLevel] is incremented,
+    /// and all lesser semantic values are reset to zero.
+    ///
+    /// It is absolutely ok to call this method if this version contains calendar values — they just
+    /// won't be updated.
+    ///
+    /// # Arguments
+    ///
+    /// - `semantic_level`: The semantic level to increment by one. All lesser levels' values will
+    ///   be reset to zero.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use version_bump::{Format, SemanticLevel, Version};
+    ///
+    /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
+    /// let version = Version::parse("1.2.3", format).unwrap();
+    /// let new_version = version.increment(&SemanticLevel::Major).unwrap();
+    /// assert_eq!("2.0.0", new_version.to_string());
+    /// assert!(version < new_version);
+    ///
+    /// let newer_version = new_version.increment(&SemanticLevel::Patch).unwrap();
+    /// assert_eq!("2.0.1", newer_version.to_string());
+    /// assert!(new_version < newer_version);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - Returns a [VersionBumpError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
+    ///   format.
+    pub fn increment(&self, specifier: &SemanticSpecifier) -> Result<Self, VersionBumpError> {
+        // track if the semantic level was found in the format string.
+        let mut spec_found = false;
 
-//         if !sem_level_found {
-//             return Err(VersionBumpError::SemanticLevelNotInFormat {
-//                 name: semantic_level.name(),
-//             });
-//         }
+        // track if we should increment or reset to 0
+        let mut already_bumped = false;
 
-//         Ok(new_version)
-//     }
+        let new_version = self.new_map_value_tokens(|(value, spec)| {
+            let new_value = if let Specifier::Semantic(this_spec) = spec {
+                if specifier >= this_spec {
+                    if specifier == this_spec {
+                        spec_found = true;
+                    }
+                    let incremented = this_spec.increment(value, already_bumped);
+                    already_bumped = true;
+                    incremented
+                } else {
+                    *value
+                }
+            } else {
+                // we should never get here because our format is guaranteed to be semantic-only. to
+                // avoid this would require a rearchitecting to make specifiers be generic to the
+                // various schemes (consider that some specifiers are shared between schemes). not
+                // sure this is possible cleanly.
+                panic!("Non-semantic specifier in semantic version")
+            };
+            Ok(new_value)
+        })?;
 
-//     /// Returns a new [Version] where all calendar values in this version are updated to match the
-//     /// given [Date]. If semantic values are also present, they will be set to `0`.
-//     /// 
-//     /// Of course, this makes sense only if this version's format contains calendar specifiers, and
-//     /// will error if not.
-//     ///
-//     /// Although uncommon, you can call this method with a Date before that of this version's
-//     /// calendar values. (Depending on your format, a complete date might not even be present.) In
-//     /// this case, note that the new version may compare *less* than this one.
-//     ///
-//     /// # Arguments
-//     ///
-//     /// - `date`: The reference date to incrememnt calendar date values.
-//     ///
-//     /// # Examples
-//     ///
-//     /// ```
-//     /// use version_bump::{Format, Date, Version};
-//     ///
-//     /// let format = Format::parse("[YYYY].[0M].[0D]").unwrap();
-//     /// let version = Version::parse("2023.12.04", format).unwrap();
-//     /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
-//     /// assert_eq!("2024.01.02", new_version.to_string());
-//     /// assert!(version < new_version);
-//     /// ```
-//     /// 
-//     /// ```
-//     /// use version_bump::{Format, Date, Version};
-//     ///
-//     /// let format = Format::parse("[YYYY].[PATCH]").unwrap();
-//     /// let version = Version::parse("2024.123", format).unwrap();
-//     /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
-//     /// assert_eq!("2024.01.02", new_version.to_string());
-//     /// assert!(version < new_version);
-//     /// ```
-//     ///
-//     /// # Errors
-//     ///
-//     /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
-//     ///   date, returns a [VersionBumpError::InvalidDateArguments].
-//     ///
-//     ///  - Returns a [VersionBumpError::NegativeYearValue]...
-//     ///
-//     ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
-//     ///      specifier.
-//     ///
-//     ///    - If the `date` provided is before the year 2000 and this version's format uses the
-//     ///      `[YY]` or `[0Y]` specifiers.
-//     ///
-//     ///    This is because the formatted values would be negative, which would affect parsing. [See
-//     ///    specifiers for more](struct.Format.html#specifier-table).
-//     pub fn update(&self, date: &Date) -> Result<Self, VersionBumpError> {
-//         let naive_date = date.get_date()?;
+        if !spec_found {
+            return Err(VersionBumpError::SemanticSpecifierNotInFormat {
+                spec: specifier.clone(),
+            });
+        }
 
-//         // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
-//         let mut cal_updated = false;
+        Ok(new_version)
+    }
+}
 
-//         let new_version = self.new_map_value_tokens(|(value, spec)| match spec {
-//             Specifier::Calendar { update, .. } => {
-//                 let updated = update(&naive_date);
-//                 if let Ok(updated) = updated {
-//                     if updated != *value {
-//                         cal_updated = true;
-//                     }
-//                 }
-//                 updated
-//             }
-//             _ => Ok(*value),
-//         })?;
+impl Version<Cal> {
+    /// Returns a new [Version] where all calendar values in this version are updated to match the
+    /// given [Date].
+    ///
+    /// Although uncommon, you can call this method with a Date before that of this version's
+    /// calendar values. (Depending on your format, a complete date might not even be present.) In
+    /// this case, note that the new version may compare *less* than this one.
+    ///
+    /// # Arguments
+    ///
+    /// - `date`: The reference date to incrememnt calendar date values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use version_bump::{Format, Date, Version};
+    ///
+    /// let format = Format::parse("[YYYY].[0M].[0D]").unwrap();
+    /// let version = Version::parse("2023.12.04", format).unwrap();
+    /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
+    /// assert_eq!("2024.01.02", new_version.to_string());
+    /// assert!(version < new_version);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
+    ///   date, returns a [VersionBumpError::InvalidDateArguments].
+    ///
+    ///  - Returns a [VersionBumpError::NegativeYearValue]...
+    ///
+    ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
+    ///      specifier.
+    ///
+    ///    - If the `date` provided is before the year 2000 and this version's format uses the
+    ///      `[YY]` or `[0Y]` specifiers.
+    ///
+    ///    This is because the formatted values would be negative, which would affect parsing. [See
+    ///    specifiers for more](struct.Format.html#specifier-table).
+    pub fn update(&self, date: &Date) -> Result<Self, VersionBumpError> {
+        let naive_date = date.get_date()?;
 
-//         if !cal_updated {
-//             return Err(VersionBumpError::NoCalendarChange);
-//         }
+        // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
+        let mut cal_updated = false;
 
-//         Ok(new_version)
-//     }
+        let new_version = self.new_map_value_tokens(|(old_value, spec)| {
+            let new_value = if let Specifier::Calendar(this_spec) = spec {
+                let updated = this_spec.update(&naive_date)?;
+                if updated != *old_value {
+                    cal_updated = true;
+                }
+                updated
+            } else {
+                panic!("Non-calendar specifier in calendar version")
+            };
+            Ok(new_value)
+        })?;
 
-//     // TODO: should we require years if any calendar specifiers are present? i can't imagine why
-//     // you would create a version scheme that has the possibility of cycling.
+        if !cal_updated {
+            return Err(VersionBumpError::NoCalendarChange);
+        }
 
-//     /// Returns a new [Version] where all calendar values in this version are updated to match the
-//     /// given [Date]. If the calendar values would not change, the version is incremented by the
-//     /// given [SemanticLevel].
-//     ///
-//     /// This method is designed for formats that have both calendar and semantic specifiers, such as
-//     /// `[YYYY].[0M].[0D].[PATCH]`. You would have such a format if you want to be able to increase
-//     /// your version multiple times within the period of your smallest calendar specifier, such a
-//     /// second time in the same day, continuing with the previous example.
-//     ///
-//     /// Currently, this method requires identifiers to be ordered in the format such that all
-//     /// calendar specifiers come before all semantic specifiers. This is because, when
-//     pub fn update_or_increment(
-//         &self,
-//         date: &Date,
-//         fallback_semantic_level: &SemanticLevel,
-//     ) -> Result<Self, VersionBumpError> {
-//         // TODO: what if we want latter semantic value to be "reset" if former calendar changes?
-//         //
-//         // just run it twice! might be a little slower than one pass, but we'd have to duplicate
-//         // code. maybe there's a way to break out some of the functionality of increment() for reuse
-//         let cal_updated = self.update(date);
-//         if let Err(VersionBumpError::NoCalendarChange) = cal_updated {
-//             self.increment(fallback_semantic_level)
-//         } else {
-//             cal_updated
-//         }
-//     }
+        Ok(new_version)
+    }
+}
 
-//     /// Parses a version string against a format string, and returns a [Version] object if the
-//     /// version string matches the format string. Otherwise, returns a [VersionBumpError].
-//     ///
-//     /// This is a convenience method that creates a temporary [Format] object and parses the version
-//     /// string against it.
-//     pub fn from_parsed_format(
-//         format_str: &str,
-//         version_str: &str,
-//     ) -> Result<Self, VersionBumpError> {
-//         let format = Format::parse(format_str)?;
-//         Self::parse(version_str, format)
-//     }
+pub enum CalSemSpecifier {
+    Minor,
+    Patch,
+}
 
-//     /// Returns `true` if the given version string is valid for the given format string.
-//     ///
-//     /// This is a convenience method that creates a temporary [Format] object and validates the
-//     /// version string matches it.
-//     pub fn is_valid(format: &str, version: &str) -> bool {
-//         Self::from_parsed_format(format, version).is_ok()
-//     }
+impl CalSemSpecifier {
+    fn spec(&self) -> &'static SemanticSpecifier {
+        match self {
+            Self::Minor => &SemanticSpecifier::Minor,
+            Self::Patch => &SemanticSpecifier::Patch,
+        }
+    }
+}
 
-//     /// Compare this version to another version string. This is a convenience method that parses
-//     /// the other version string against the format of this version.
-//     pub fn partial_cmp_with_string(&self, other_version_str: &str) -> Option<Ordering> {
-//         let other = Self::parse(other_version_str, self.into()).ok()?;
-//         self.partial_cmp(&other)
-//     }
-// }
+impl Version<CalSem> {
+    /// Returns a new [Version] where all calendar values in this version are updated to match the
+    /// given [Date]. If the calendar values would not change, the version is incremented by the
+    /// given [CalSemSemanticSpecifier].
+    ///
+    /// TODO: fill out rest of this doc
+    pub fn update_or_increment(
+        &self,
+        date: &Date,
+        semantic_specifier: &CalSemSpecifier,
+    ) -> Result<Self, VersionBumpError> {
+        // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
-// impl fmt::Display for Version {
-//     /// Returns the rendered version string
-//     fn fmt<'a>(&'a self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         for token in &self.tokens {
-//             let rendered: Cow<'a, String> = match token {
-//                 VersionToken::Value { value, spec } => Cow::Owned(spec.format_value(value)),
-//                 VersionToken::Fixed(text) => Cow::Borrowed(text),
-//             };
-//             write!(f, "{}", rendered)?
-//         }
+        // map to a regular semantic specifier
+        let semantic_specifier = semantic_specifier.spec();
 
-//         Ok(())
-//     }
-// }
+        let naive_date = date.get_date()?;
 
-// /// Returns a new [Format] object equal to the one used to parse this version.
-// impl From<&Version> for Format {
-//     fn from(version: &Version) -> Self {
-//         Format::from_tokens(version.tokens.iter().map(|token| token.into()).collect())
-//     }
-// }
+        // track if the semantic level was found in the format string.
+        let mut spec_found = false;
+
+        // track if we should increment or reset to 0
+        let mut already_bumped = false;
+
+        // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
+        let mut cal_updated = false;
+
+        let new_version = self.new_map_value_tokens(|(old_value, spec)| {
+            let new_value = match spec {
+                Specifier::Calendar(this_spec) => {
+                    let updated = this_spec.update(&naive_date)?;
+                    if updated != *old_value {
+                        cal_updated = true;
+                    }
+                    updated
+                }
+                Specifier::Semantic(this_spec) => {
+                    if !cal_updated {
+                        if semantic_specifier >= this_spec {
+                            if semantic_specifier == this_spec {
+                                spec_found = true;
+                            }
+                            let incremented = this_spec.increment(old_value, already_bumped);
+                            already_bumped = true;
+                            incremented
+                        } else {
+                            *old_value
+                        }
+                    } else {
+                        *old_value
+                    }
+                }
+            };
+            Ok(new_value)
+        })?;
+
+        if !spec_found {
+            return Err(VersionBumpError::SemanticSpecifierNotInFormat {
+                spec: semantic_specifier.clone(),
+            });
+        }
+
+        Ok(new_version)
+    }
+}
+
+impl<S: Scheme> fmt::Display for Version<S> {
+    /// Returns the rendered version string
+    fn fmt<'a>(&'a self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for token in &self.tokens {
+            let rendered: Cow<'a, String> = match token {
+                VersionToken::Value { value, spec } => Cow::Owned(spec.format_value(value)),
+                VersionToken::Fixed(text) => Cow::Borrowed(text),
+            };
+            write!(f, "{}", rendered)?
+        }
+
+        Ok(())
+    }
+}
+
+/// Returns a new [Format] object equal to the one used to parse this version.
+impl<S: Scheme> From<&Version<S>> for Format<S> {
+    fn from(version: &Version<S>) -> Self {
+        Format::from_tokens(version.tokens.iter().map(|token| token.into()).collect())
+    }
+}
 
 // #[cfg(test)]
 // mod tests {

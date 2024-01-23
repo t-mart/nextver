@@ -1,8 +1,15 @@
-use crate::{scheme::Scheme, specifier::Specifier};
+use crate::{
+    scheme::{CalSem, Scheme},
+    specifier::{SemanticSpecifier, Specifier, MAJOR},
+};
 
-/// Errors that can occur in this library
 // TODO: we need to break this down. first pass: format errors, version errors, increment errors.
 // and then, make a top-level error that accepts these categories as variants.
+//
+// TODO: Make a conveniece Error type
+
+/// Errors that can occur in this library
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum VersionBumpError {
     #[error("Version should change when incrementing calendar specifiers, but did not")]
@@ -25,8 +32,8 @@ pub enum VersionBumpError {
     )]
     UnterminatedSpecifier { pattern: String },
 
-    #[error("To increment `{name}`, it should be present in format")]
-    SemanticLevelNotInFormat { name: &'static str },
+    #[error("To increment `{spec}`, it should be present in format")]
+    SemanticSpecifierNotInFormat { spec: SemanticSpecifier },
 
     #[error("Calendar specifiers should be present in format")]
     CalendarNotInFormat,
@@ -43,8 +50,8 @@ pub enum VersionBumpError {
     #[error("In {scheme_name} format, first specifier should be {expected_first} got `{spec}`")]
     WrongFirstSpecifier {
         spec: &'static Specifier,
-        scheme_name: String,
-        expected_first: String,
+        scheme_name: &'static str,
+        expected_first: &'static str,
     },
 
     #[error("All calendar specifiers should precede all semantic specifiers, got `{next}` after `{prev}`")]
@@ -53,11 +60,8 @@ pub enum VersionBumpError {
         next: &'static Specifier,
     },
 
-    #[error("{spec} should not be in a {scheme_name} format")]
-    MajorInCalSemFormat {
-        spec: &'static Specifier,
-        scheme_name: String,
-    },
+    #[error("{} should not be in a {} format", &MAJOR, CalSem.name())]
+    MajorInCalSemFormat,
 
     #[error("Specifier `{next}` should be relative to its predecessor `{prev}`")]
     SpecifierMustBeRelative {
@@ -68,6 +72,12 @@ pub enum VersionBumpError {
     #[error("Unacceptable specifier `{spec}` in {scheme_name} format")]
     UnacceptableSpecifier {
         spec: &'static Specifier,
-        scheme_name: String,
+        scheme_name: &'static str,
     },
+
+    #[error("Format should end with a semantic specifier, got `{last_spec}`")]
+    FormatIncomplete { last_spec: &'static Specifier },
+
+    #[error("Format should contain at least one specifier")]
+    NoSpecifiersInFormat,
 }
