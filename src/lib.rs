@@ -1,4 +1,4 @@
-//! # version-bump
+//! # nextver
 //!
 //! A library for parsing and incrementing arbitrarily-formatted versions.
 //!
@@ -11,7 +11,7 @@
 //! Below, the text in `[brackets]` is a specifier. See what they mean [here](#specifier-table).
 //!
 //! ```
-//! use version_bump::prelude::*;
+//! use nextver::prelude::*;
 //!
 //! let sem_fmt = Sem::new_format("[MAJOR].[MINOR].[PATCH]").unwrap();
 //! let sem_ver = sem_fmt.parse_version("1.2.3").unwrap();
@@ -21,7 +21,7 @@
 //! ```
 //!
 //! ```
-//! use version_bump::prelude::*;
+//! use nextver::prelude::*;
 //!
 //! let cal_sem_fmt = CalSem::new_format("[YYYY].[MM]-[PATCH]").unwrap();
 //! let cal_sem_ver = cal_sem_fmt.parse_version("2023.12-0").unwrap();
@@ -41,7 +41,7 @@
 //!
 //! ## Schemes
 //!
-//! version-bump defines three versioning schemes:
+//! nextver defines three versioning schemes:
 //!
 //! - [`Sem`]: Only semantic specifiers. For flexibility, it is a superset of
 //!   [SemVer](https://semver.org/) in that it allows the omission of `[MINOR]` and `[PATCH]`
@@ -87,7 +87,7 @@
 //! non-greedy latter specifier in such cases.
 //!
 //! ```
-//! use version_bump::prelude::*;
+//! use nextver::prelude::*;
 //!
 //! // always consistent because of literal separator
 //! let format = Cal::new_format("[YYYY].[MM]");
@@ -106,7 +106,7 @@
 //! `]` does not need to be escaped.
 //! 
 //! ```
-//! use version_bump::prelude::*;
+//! use nextver::prelude::*;
 //! 
 //! // double backslash in regular strings
 //! let format = Sem::new_format("[MAJOR]-\\[literal-text]");
@@ -127,7 +127,7 @@ pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
 pub use crate::specifier::SemanticSpecifier;
 pub use crate::version::{CalSemSpecifier, Date, Version};
 
-/// A convenience module appropriate for glob imports (`use version_bump::prelude::*;`).
+/// A convenience module appropriate for glob imports (`use nextver::prelude::*;`).
 pub mod prelude {
     #[doc(no_inline)]
     pub use crate::Cal;

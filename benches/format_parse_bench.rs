@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use version_bump::{Sem, Cal, CalSem, Scheme};
+use nextver::{Sem, Cal, CalSem, Scheme};
 
 fn sem_ok_inputs() -> Vec<&'static str> {
     vec![

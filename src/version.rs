@@ -9,7 +9,7 @@ use std::{borrow::Cow, marker::PhantomData};
 Ways to specify a date
 
 ```
-use version_bump::Date;
+use nextver::Date;
 
 let explicit = Date::Explicit { year: 2021, month: 2, day: 3 };
 let utc_now = Date::UtcNow;
@@ -141,7 +141,7 @@ impl From<&VersionToken> for FormatToken {
 /// Quick start:
 ///
 /// ```
-/// use version_bump::{Version, VersionBumpError, SemanticLevel};
+/// use nextver::{Version, VersionBumpError, SemanticLevel};
 ///
 /// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 /// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
@@ -155,7 +155,7 @@ impl From<&VersionToken> for FormatToken {
 /// Or, use a previously created [Format] object:
 ///
 /// ```
-/// use version_bump::{Format, Version};
+/// use nextver::{Format, Version};
 ///
 /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
 /// let version = Version::parse("1.2.3", format.clone());
@@ -165,7 +165,7 @@ impl From<&VersionToken> for FormatToken {
 /// You can increment by semantic level, calendar date, or both:
 ///
 /// ```
-/// use version_bump::{Version, SemanticLevel, Date};
+/// use nextver::{Version, SemanticLevel, Date};
 ///
 /// // Mix and match specifiers
 /// let version = Version::from_parsed_format("[YYYY].[PATCH]", "2023.123").unwrap();
@@ -312,7 +312,7 @@ impl Version<Sem> {
     /// # Example
     ///
     /// ```
-    /// use version_bump::{Format, SemanticLevel, Version};
+    /// use nextver::{Format, SemanticLevel, Version};
     ///
     /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
     /// let version = Version::parse("1.2.3", format).unwrap();
@@ -383,7 +383,7 @@ impl Version<Cal> {
     /// # Examples
     ///
     /// ```
-    /// use version_bump::{Format, Date, Version};
+    /// use nextver::{Format, Date, Version};
     ///
     /// let format = Format::parse("[YYYY].[0M].[0D]").unwrap();
     /// let version = Version::parse("2023.12.04", format).unwrap();

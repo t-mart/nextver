@@ -13,7 +13,7 @@ use clap::{arg, command, value_parser, ArgAction, Args, Command, Parser, Subcomm
 // "validate" subcommand:
 // - Version<Sem/CalSem/Cal> validate
 
-// use version_bump::{Cal, CalSem, Date, Sem, SemanticSpecifier, Version, VersionBumpError, Format};
+// use nextver::{Cal, CalSem, Date, Sem, SemanticSpecifier, Version, VersionBumpError, Format};
 mod error;
 mod format;
 mod scheme;
@@ -118,7 +118,7 @@ impl DateArg {
             return Ok(Date::LocalNow);
         }
         if let Some(date) = &self.date {
-            // this is a little inefficient, because internally, version_bump makes a NaiveDate
+            // this is a little inefficient, because internally, nextver makes a NaiveDate
             // but i don't want to do our own string parsing here.
             return Ok(NaiveDate::parse_from_str(date, "%Y-%m-%d").map(Date::from)?);
         }
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn test_some_sheeeeyt() {
         let res = Cli::try_parse_from([
-            "version-bump",
+            "nextver",
             "valid",
             "2024.12",
             "--format",

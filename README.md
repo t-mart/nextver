@@ -1,15 +1,15 @@
-# version-bump
+# nextver
 
 A library for parsing and incrementing arbitrarily-formatted versions.
 
-See the docs: <https://docs.rs/version-bump>
+See the docs: <https://docs.rs/nextver>
 
 ## Quick start
 
 TODO: fix this to work
 
 ```rust
-use version_bump::{Version, VersionBumpError, SemanticLevel};
+use nextver::{Version, VersionBumpError, SemanticLevel};
 
 let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
