@@ -204,7 +204,10 @@ impl<S: Scheme> Format<S> {
                     let mut next_chars = format.chars().skip(1);
                     let closing_index = next_chars
                         .position(|c| c == ']')
-                        .map(|index| index + 1)
+                        .map(|index| {
+                            // 1 for opening bracket that we skipped
+                            index + 1
+                        })
                         .ok_or_else(|| {
                             // didn't find closing bracket
                             VersionBumpError::UnterminatedSpecifier {
@@ -213,7 +216,7 @@ impl<S: Scheme> Format<S> {
                         })?;
                     // found closing, but unknown
                     return Err(VersionBumpError::UnknownSpecifier {
-                        pattern: format[..closing_index].to_owned(),
+                        pattern: format[..closing_index + 1].to_owned(),
                     });
                 } else if format.starts_with(r"\[") {
                     // escaped opening bracket
@@ -285,9 +288,12 @@ impl<S: Scheme> fmt::Display for Format<S> {
 mod tests {
     use super::*;
     use crate::{
-        scheme::{Cal, CalSem, Scheme, Sem}, specifier::{
-            FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_DAY, SHORT_MONTH, SHORT_WEEK, SHORT_YEAR, YEAR_FORMAT_STRINGS, ZERO_PADDED_DAY, ZERO_PADDED_MONTH, ZERO_PADDED_WEEK, ZERO_PADDED_YEAR
-        }
+        scheme::{Cal, CalSem, Scheme, Sem},
+        specifier::{
+            FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_DAY, SHORT_MONTH, SHORT_WEEK, SHORT_YEAR,
+            YEAR_FORMAT_STRINGS, ZERO_PADDED_DAY, ZERO_PADDED_MONTH, ZERO_PADDED_WEEK,
+            ZERO_PADDED_YEAR,
+        },
     };
     use itertools::Itertools;
     use rstest::*;

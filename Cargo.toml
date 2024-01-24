@@ -1,11 +1,11 @@
 [package]
-name = "version-bump"
+name = "nextver"
 version = "0.1.0"
 authors = ["Tim Martin <tim@tim.direct>"]
 readme = "README.md"
-repository = "https://github.com/t-mart/version-bump"
-documentation = "https://docs.rs/version-bump"
-homepage = "https://github.com/t-mart/version-bump"
+repository = "https://github.com/t-mart/nextver"
+documentation = "https://docs.rs/nextver"
+homepage = "https://github.com/t-mart/nextver"
 description = "A library for parsing and incrementing arbitrarily-formatted versions."
 license = "MIT"
 edition = "2021"

@@ -33,7 +33,6 @@ pub enum VersionBumpCliError {
 
     #[error("{0}")]
     UnparseableDate(#[from] chrono::ParseError),
-
     // #[error("{0}")]
     // CliParseError(#[from] clap::Error),
 }
@@ -198,13 +197,18 @@ enum Commands {
     },
 }
 
+type Output = (String, i32);
+
 fn main() {
     let cli = Cli::parse();
 
     println!("{:?}", &cli);
 
     match do_work(cli) {
-        Ok(s) => println!("{}", s),
+        Ok((output, exit_code)) => {
+            println!("{output}");
+            std::process::exit(exit_code);
+        }
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
@@ -212,13 +216,17 @@ fn main() {
     }
 }
 
-fn do_work(cli: Cli) -> Result<String, VersionBumpCliError> {
+fn do_work(cli: Cli) -> Result<Output, VersionBumpCliError> {
     match cli.command {
         Some(Commands::Valid {
             format: format_str,
             version: version_str,
             scheme,
-        }) => Ok(scheme.validate(&format_str, &version_str)?.to_string()),
+        }) => Ok(if scheme.validate(&format_str, &version_str)? {
+            ("true".to_string(), 0)
+        } else {
+            ("false".to_string(), 1)
+        }),
         Some(Commands::Bump {
             format,
             version,
@@ -230,7 +238,7 @@ fn do_work(cli: Cli) -> Result<String, VersionBumpCliError> {
                 .map(|semantic_level| semantic_level._to_semantic_level())
                 .as_ref();
             // let date = date.map(|date| date.to_date()).transpose()?;
-            Ok("todo".to_string())
+            Ok(("todo".to_string(), 0))
         }
         None => unreachable!("clap should catch this no-subcommand case"),
     }
@@ -247,8 +255,9 @@ mod tests {
             "valid",
             "2024.12",
             "--format",
-            "[YYYY].[MM]fdsf",
-        ]).unwrap();
+            "[YYYY].[MINOR]f",
+        ])
+        .unwrap();
 
         dbg!(do_work(res).unwrap());
     }
