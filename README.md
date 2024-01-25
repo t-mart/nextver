@@ -9,7 +9,7 @@ See the docs: <https://docs.rs/nextver>
 TODO: fix this to work
 
 ```rust
-use nextver::{Version, VersionBumpError, SemanticLevel};
+use nextver::{Version, NextVerError, SemanticLevel};
 
 let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
@@ -24,7 +24,7 @@ let dated = Version::from_parsed_format("[YYYY].[PATCH]", "2024.18").unwrap();
 
 // errors tell you what went wrong
 let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch)));
+assert!(matches!(invalid, Err(NextVerError::VersionFormatMismatch)));
 ```
 
 Jump to the specifiers table [here](struct.Format.html#specifier-table).

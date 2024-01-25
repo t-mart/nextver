@@ -1,12 +1,12 @@
-use crate::scheme::{Cal, CalSem, Sem, Scheme};
-use crate::{format::FormatToken, specifier::*, Format, VersionBumpError};
+use crate::scheme::{Cal, CalSem, Scheme, Sem};
+use crate::{format::FormatToken, specifier::*, Format, NextVerError};
 use chrono::{Datelike, Local, NaiveDate, Utc};
 use core::{fmt, panic};
 use std::cmp::Ordering;
 use std::{borrow::Cow, marker::PhantomData};
 
 /**
-Ways to specify a date
+Ways to specify a date.
 
 ```
 use nextver::Date;
@@ -29,20 +29,21 @@ pub enum Date {
     /// Note that it is possible to create invalid dates, but no validation will be done until this
     /// date is used by the library. If you are concerned about this use [Date::from] with a
     /// [chrono::Datelike] instead.
-    Explicit { year: i32, month: u32, day: u32 },
+    Explicit(i32, u32, u32),
 }
 
 impl Date {
-    fn get_date(&self) -> Result<NaiveDate, VersionBumpError> {
+    fn get_date(&self) -> Result<NaiveDate, NextVerError> {
         match self {
             Self::UtcNow => Ok(Utc::now().date_naive()),
             Self::LocalNow => Ok(Local::now().date_naive()),
-            Self::Explicit { year, month, day } => NaiveDate::from_ymd_opt(*year, *month, *day)
-                .ok_or(VersionBumpError::InvalidDateArguments {
+            Self::Explicit(year, month, day) => NaiveDate::from_ymd_opt(*year, *month, *day).ok_or(
+                NextVerError::InvalidDateArguments {
                     year: *year,
                     month: *month,
                     day: *day,
-                }),
+                },
+            ),
         }
     }
 }
@@ -54,11 +55,7 @@ impl<T: Datelike> From<T> for Date {
     // not a concrete type. therefore, i think this might be best: just allow conversion.
     /// Creates a [Date::Explicit] from a [chrono::Datelike] object.
     fn from(datelike: T) -> Self {
-        Date::Explicit {
-            year: datelike.year(),
-            month: datelike.month(),
-            day: datelike.day(),
-        }
+        Date::Explicit(datelike.year(), datelike.month(), datelike.day())
     }
 }
 
@@ -141,7 +138,7 @@ impl From<&VersionToken> for FormatToken {
 /// Quick start:
 ///
 /// ```
-/// use nextver::{Version, VersionBumpError, SemanticLevel};
+/// use nextver::{Version, NextVerError, SemanticLevel};
 ///
 /// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 /// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
@@ -149,7 +146,7 @@ impl From<&VersionToken> for FormatToken {
 /// assert!(version < incremented);
 ///
 /// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-/// assert!(matches!(invalid, Err(VersionBumpError::VersionFormatMismatch {..})));
+/// assert!(matches!(invalid, Err(NextVerError::VersionFormatMismatch {..})));
 /// ```
 ///
 /// Or, use a previously created [Format] object:
@@ -201,7 +198,7 @@ impl<S: Scheme> Version<S> {
     }
 
     /// Parses a version string against a [Format], and returns a [Version] object if the version
-    /// string matches the format. Otherwise, returns a [VersionBumpError].
+    /// string matches the format. Otherwise, returns a [NextVerError].
     ///
     /// If you just need a one-off parse or validation, you can use [Version::from_parsed_format] or
     /// [Version::is_valid] instead, which create [Format] objects implicitly.
@@ -214,10 +211,10 @@ impl<S: Scheme> Version<S> {
     /// # Errors
     ///
     /// - If the version string does not match the format string, returns a
-    ///   [VersionBumpError::VersionFormatMismatch].
-    pub(crate) fn parse(version_str: &str, format: &Format<S>) -> Result<Self, VersionBumpError> {
+    ///   [NextVerError::VersionFormatMismatch].
+    pub(crate) fn parse(version_str: &str, format: &Format<S>) -> Result<Self, NextVerError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
-            return Err(VersionBumpError::VersionFormatMismatch {
+            return Err(NextVerError::VersionFormatMismatch {
                 version_string: version_str.to_owned(),
                 format_string: format.to_string(),
             });
@@ -248,7 +245,7 @@ impl<S: Scheme> Version<S> {
                 }
                 FormatToken::Literal(format_text) => {
                     if !text.eq(format_text) {
-                        return Err(VersionBumpError::VersionFormatMismatch {
+                        return Err(NextVerError::VersionFormatMismatch {
                             version_string: version_str.to_owned(),
                             format_string: format.to_string(),
                         });
@@ -266,9 +263,9 @@ impl<S: Scheme> Version<S> {
         })
     }
 
-    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionBumpError>
+    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextVerError>
     where
-        F: FnMut((&u32, &'static Specifier)) -> Result<u32, VersionBumpError>,
+        F: FnMut((&u32, &'static Specifier)) -> Result<u32, NextVerError>,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
@@ -327,9 +324,9 @@ impl Version<Sem> {
     ///
     /// # Errors
     ///
-    /// - Returns a [VersionBumpError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
+    /// - Returns a [NextVerError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
-    pub fn increment(&self, specifier: &SemanticSpecifier) -> Result<Self, VersionBumpError> {
+    pub fn next(&self, specifier: &SemanticSpecifier) -> Result<Self, NextVerError> {
         // track if the semantic level was found in the format string.
         let mut spec_found = false;
 
@@ -359,7 +356,7 @@ impl Version<Sem> {
         })?;
 
         if !spec_found {
-            return Err(VersionBumpError::SemanticSpecifierNotInFormat {
+            return Err(NextVerError::SemanticSpecifierNotInFormat {
                 spec: specifier.clone(),
             });
         }
@@ -395,9 +392,9 @@ impl Version<Cal> {
     /// # Errors
     ///
     /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
-    ///   date, returns a [VersionBumpError::InvalidDateArguments].
+    ///   date, returns a [NextVerError::InvalidDateArguments].
     ///
-    ///  - Returns a [VersionBumpError::NegativeYearValue]...
+    ///  - Returns a [NextVerError::NegativeYearValue]...
     ///
     ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
     ///      specifier.
@@ -407,7 +404,7 @@ impl Version<Cal> {
     ///
     ///    This is because the formatted values would be negative, which would affect parsing. [See
     ///    specifiers for more](struct.Format.html#specifier-table).
-    pub fn update(&self, date: &Date) -> Result<Self, VersionBumpError> {
+    pub fn next(&self, date: &Date) -> Result<Self, NextVerError> {
         let naive_date = date.get_date()?;
 
         // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
@@ -427,13 +424,18 @@ impl Version<Cal> {
         })?;
 
         if !cal_updated {
-            return Err(VersionBumpError::NoCalendarChange);
+            return Err(NextVerError::NoCalendarChange);
         }
 
         Ok(new_version)
     }
 }
 
+/// A semantic specifier, used as an argument to [Version<CalSem>::next]. It only includes `Minor`
+/// and `Patch` variants because `major` is not permitted in a [CalSem] format.
+///
+/// Note that this name is a bit of a misnomer because it's not just a "CalSem specifier" — it's
+/// a "CalSem semantic specifier". But that's a bit of a mouthful.
 pub enum CalSemSpecifier {
     Minor,
     Patch,
@@ -454,11 +456,11 @@ impl Version<CalSem> {
     /// given [CalSemSemanticSpecifier].
     ///
     /// TODO: fill out rest of this doc
-    pub fn update_or_increment(
+    pub fn next(
         &self,
         date: &Date,
         semantic_specifier: &CalSemSpecifier,
-    ) -> Result<Self, VersionBumpError> {
+    ) -> Result<Self, NextVerError> {
         // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
         // map to a regular semantic specifier
@@ -505,7 +507,7 @@ impl Version<CalSem> {
         })?;
 
         if !spec_found {
-            return Err(VersionBumpError::SemanticSpecifierNotInFormat {
+            return Err(NextVerError::SemanticSpecifierNotInFormat {
                 spec: semantic_specifier.clone(),
             });
         }
@@ -718,7 +720,7 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
 //             let version = Version::parse("1", format).unwrap();
 //             let actual = version.increment(&sem_level);
 //             assert_eq!(
-//                 Err(VersionBumpError::SemanticLevelNotInFormat {
+//                 Err(NextVerError::SemanticLevelNotInFormat {
 //                     name: sem_level.name(),
 //                 }),
 //                 actual
@@ -735,7 +737,7 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
 //         let actual = version.update(&DATE_INVALID);
 //         assert!(matches!(
 //             actual,
-//             Err(VersionBumpError::InvalidDateArguments { .. })
+//             Err(NextVerError::InvalidDateArguments { .. })
 //         ));
 //     }
 
@@ -748,7 +750,7 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
 //         dbg!(&actual);
 //         assert!(matches!(
 //             actual,
-//             Err(VersionBumpError::NegativeYearValue { .. })
+//             Err(NextVerError::NegativeYearValue { .. })
 //         ));
 //     }
 
@@ -761,7 +763,7 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
 //             let actual = version.update(&DATE_1998_01_01);
 //             assert!(matches!(
 //                 actual,
-//                 Err(VersionBumpError::NegativeYearValue { .. })
+//                 Err(NextVerError::NegativeYearValue { .. })
 //             ));
 //         }
 //     }
@@ -777,7 +779,7 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
 //             let format = Format::parse(format).unwrap();
 //             let version = Version::parse(version, format).unwrap();
 //             let actual = version.update(&DATE_2002_02_02);
-//             assert_eq!(Err(VersionBumpError::NoCalendarChange), actual);
+//             assert_eq!(Err(NextVerError::NoCalendarChange), actual);
 //         }
 //     }
 

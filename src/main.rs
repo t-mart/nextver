@@ -1,145 +1,172 @@
 #![feature(lazy_cell)]
-
-use chrono::{Datelike, NaiveDate};
-use clap::{arg, command, value_parser, ArgAction, Args, Command, Parser, Subcommand, ValueEnum};
-
-// APIs to support:
-//
-// "bump" subcommand:
-// - Version<Sem> increment
-// - Version<CalSem> update_or_increment
-// - Version<CalSem> update
-//
-// "validate" subcommand:
-// - Version<Sem/CalSem/Cal> validate
-
-// use nextver::{Cal, CalSem, Date, Sem, SemanticSpecifier, Version, VersionBumpError, Format};
 mod error;
 mod format;
 mod scheme;
 mod specifier;
 mod version;
 
-use crate::error::VersionBumpError;
-use crate::format::Format;
-use crate::scheme::{Cal, CalSem, Scheme, Sem};
-use crate::specifier::SemanticSpecifier;
-use crate::version::{CalSemSpecifier, Date, Version};
+// don't technically need to `pub` use these, but linter complains of unused without it (despite
+// them being pub-used in lib.rs)
+pub use crate::error::NextVerError;
+pub use crate::format::Format;
+pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
+pub use crate::specifier::SemanticSpecifier;
+pub use crate::version::{CalSemSpecifier, Date, Version};
+use clap::{arg, command, Parser, Subcommand, ValueEnum};
 
-#[derive(thiserror::Error, Debug)]
-pub enum VersionBumpCliError {
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum NextVerCliError {
     #[error("{0}")]
-    LibraryError(#[from] VersionBumpError),
+    LibraryError(#[from] NextVerError),
 
-    #[error("{0}")]
-    UnparseableDate(#[from] chrono::ParseError),
-    // #[error("{0}")]
-    // CliParseError(#[from] clap::Error),
+    #[error("format string was invalid for all schemes")]
+    NoValidScheme,
+
+    #[error("major semantic specifier level should not be used with calsem scheme")]
+    MajorSpecifierWithCalsem,
+
+    // This is a CLI usage concern that would normally be delegated to clap, but clap doesn't seem
+    // to be able to model options that are conditionally-required based on runtime things (i.e.,
+    // our "guess" logic), and, indeed, that seems like a lot to ask. Nor can we use clap APIs to
+    // render this error with the same styling/context/etc that clap does internally. So, we just do
+    // it ourselves.
+    #[error("this scheme requires a semantic specifier, use `-l`/`--sem-level`")]
+    NoSemanticSpecifier,
 }
 
 #[derive(Clone, PartialEq, Eq, ValueEnum, Debug)]
 enum SchemeArg {
+    /// interpret as semantic scheme
     Sem,
+    /// interpret as calendar scheme
     Cal,
+    /// interpret as calendar-semantic scheme
     CalSem,
+    /// try to guess the scheme by trying all schemes
     Guess,
 }
 
-impl SchemeArg {
-    fn validate(&self, format_str: &str, version_str: &str) -> Result<bool, VersionBumpCliError> {
-        match self {
-            SchemeArg::Sem => Self::validate_for_scheme(format_str, version_str, Sem),
-            SchemeArg::Cal => Self::validate_for_scheme(format_str, version_str, Cal),
-            SchemeArg::CalSem => Self::validate_for_scheme(format_str, version_str, CalSem),
-            SchemeArg::Guess => {
-                // this order is important: try the most permissive one last (CalSem)
-                Self::validate_for_scheme(format_str, version_str, Sem)
-                    .or_else(|_| Self::validate_for_scheme(format_str, version_str, Cal))
-                    .or_else(|_| Self::validate_for_scheme(format_str, version_str, CalSem))
+// stdout text and exit code
+type Output = (String, ExitCode);
+
+fn validate(
+    scheme: &SchemeArg,
+    format_str: &str,
+    version_str: &str,
+) -> Result<Output, NextVerCliError> {
+    let is_valid = match scheme {
+        SchemeArg::Sem => Ok(Sem::is_valid(format_str, version_str)?),
+
+        SchemeArg::Cal => Ok(Cal::is_valid(format_str, version_str)?),
+
+        SchemeArg::CalSem => Ok(CalSem::is_valid(format_str, version_str)?),
+
+        SchemeArg::Guess => Sem::is_valid(format_str, version_str)
+            .or_else(|_| Cal::is_valid(format_str, version_str))
+            .or_else(|_| CalSem::is_valid(format_str, version_str))
+            .map_err(|_| NextVerCliError::NoValidScheme),
+    }?;
+    if is_valid {
+        Ok((true.to_string(), ExitCode::Success))
+    } else {
+        Ok((false.to_string(), ExitCode::Failure))
+    }
+}
+
+fn next(
+    scheme: &SchemeArg,
+    format_str: &str,
+    version_str: &str,
+    date: &Date,
+    spec: Option<&SemanticSpecifierArg>,
+) -> Result<Output, NextVerCliError> {
+    // functions to get the semantic specifier from the option, that error if we need it but
+    // don't have it
+    let sem_spec = || {
+        spec.map(|s| s.to_semantic_specifier())
+            .ok_or(NextVerCliError::NoSemanticSpecifier)
+    };
+    let cal_sem_spec = || {
+        spec.map(|s| s.to_calsem_specifier())
+            .transpose()?
+            .ok_or(NextVerCliError::NoSemanticSpecifier)
+    };
+
+    let next_version = match scheme {
+        SchemeArg::Sem => Sem::next(format_str, version_str, &sem_spec()?)?,
+
+        SchemeArg::Cal => Cal::next(format_str, version_str, date)?,
+
+        SchemeArg::CalSem => CalSem::next(format_str, version_str, date, &cal_sem_spec()?)?,
+
+        SchemeArg::Guess => {
+            if let Ok(sem_ver) = Sem::new_version(format_str, version_str) {
+                sem_ver.next(&sem_spec()?)?.to_string()
+            } else if let Ok(cal_ver) = Cal::new_version(format_str, version_str) {
+                cal_ver.next(date)?.to_string()
+            } else if let Ok(cal_sem_ver) = CalSem::new_version(format_str, version_str) {
+                cal_sem_ver.next(date, &cal_sem_spec()?)?.to_string()
+            } else {
+                return Err(NextVerCliError::NoValidScheme);
             }
         }
-    }
-
-    fn validate_for_scheme<S: Scheme>(
-        format_str: &str,
-        version_str: &str,
-        scheme: S,
-    ) -> Result<bool, VersionBumpCliError> {
-        let format = Format::parse(format_str, scheme)?;
-        Ok(Version::parse(version_str, &format).is_ok())
-    }
+    };
+    Ok((next_version, ExitCode::Success))
 }
 
 #[derive(Clone, PartialEq, Eq, ValueEnum, Debug)]
-enum SemanticArg {
+enum SemanticSpecifierArg {
+    /// increment the major semantic specifier
     Major,
+    /// increment the minor semantic specifier
     Minor,
+    /// increment the patch semantic specifier
     Patch,
 }
 
-impl SemanticArg {
-    fn _to_semantic_level(&self) -> SemanticSpecifier {
+impl SemanticSpecifierArg {
+    fn to_semantic_specifier(&self) -> SemanticSpecifier {
         match self {
-            SemanticArg::Major => SemanticSpecifier::Major,
-            SemanticArg::Minor => SemanticSpecifier::Minor,
-            SemanticArg::Patch => SemanticSpecifier::Patch,
+            SemanticSpecifierArg::Major => SemanticSpecifier::Major,
+            SemanticSpecifierArg::Minor => SemanticSpecifier::Minor,
+            SemanticSpecifierArg::Patch => SemanticSpecifier::Patch,
+        }
+    }
+
+    fn to_calsem_specifier(&self) -> Result<CalSemSpecifier, NextVerCliError> {
+        match self {
+            SemanticSpecifierArg::Major => Err(NextVerCliError::MajorSpecifierWithCalsem),
+            SemanticSpecifierArg::Minor => Ok(CalSemSpecifier::Minor),
+            SemanticSpecifierArg::Patch => Ok(CalSemSpecifier::Patch),
         }
     }
 }
 
-/// Doc comment
-#[derive(Args, Debug)]
-#[group(required = false, multiple = false)]
-struct DateArg {
-    /// [DATE PROVIDER] Use the current UTC date to update calendar specifiers. Exclusive with other
-    /// date providers.
-    #[arg(long)]
-    utc: bool,
+const UNPARSEABLE_DATE_ERROR: &str = "Could not parse provided date as `utc`, `local`, or `Y-M-D`";
 
-    /// [DATE PROVIDER] Use the current local date to update calendar specifiers. Exclusive with
-    /// other date providers.
-    #[arg(long)]
-    local: bool,
+fn parse_date(s: &str) -> Result<Date, &'static str> {
+    match s {
+        "utc" => Ok(Date::UtcNow),
+        "local" => Ok(Date::LocalNow),
+        _ => {
+            let parts = s.splitn(3, '-').collect::<Vec<_>>();
+            if parts.len() < 3 {
+                return Err(UNPARSEABLE_DATE_ERROR);
+            }
+            let year = parts[0]
+                .parse::<i32>()
+                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
+            let month = parts[1]
+                .parse::<u32>()
+                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
+            let day = parts[2]
+                .parse::<u32>()
+                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
 
-    /// [DATE PROVIDER] Use a date in format `YYYY-MM-DD` to update calendar specifiers. Exclusive
-    /// with other date providers.
-    #[arg(long, value_name = "YYYY-MM-DD")]
-    date: Option<String>,
-}
-
-impl DateArg {
-    fn to_date(&self) -> Result<Date, VersionBumpCliError> {
-        // this struct acts like an enumeration since multiple is false. therefore, we don't need
-        // to use match statement (in fact, that'd be more cumbersome)
-        if self.utc {
-            return Ok(Date::UtcNow);
+            Ok(Date::Explicit(year, month, day))
         }
-        if self.local {
-            return Ok(Date::LocalNow);
-        }
-        if let Some(date) = &self.date {
-            // this is a little inefficient, because internally, nextver makes a NaiveDate
-            // but i don't want to do our own string parsing here.
-            return Ok(NaiveDate::parse_from_str(date, "%Y-%m-%d").map(Date::from)?);
-        }
-        unreachable!();
     }
 }
-
-// #[derive(Args, Debug)]
-// #[group(required = true, multiple = true)]
-// struct IncrementArgs {
-//     /// The semantic level...
-//     #[arg(short, long, value_enum)]
-//     semantic: Option<SemanticLevelArg>,
-
-//     /// The date...
-//     // #[arg(short, long)]
-//     // date: Option<String>,
-//     #[command(flatten)]
-//     date: Option<DateArg>,
-//     // date: DateArg,
-// }
 
 // TODO: somehow figure out how to augment the help subcommand to add a section `format`, which
 // describes the format specifiers.
@@ -156,90 +183,107 @@ struct Cli {
 enum Commands {
     /// Validates that a version matches a format
     Valid {
-        /// The format string to validate against
+        /// The version string to validate as matching a format
+        version: String,
+
+        /// A string defining the structure of the version string
         #[arg(short, long)]
         format: String,
 
-        /// The version string to validate
-        version: String,
-
-        /// The semantic level to increment. Omit to not increment any semantic specifiers.
+        /// Interpret the format as the given scheme.
         #[arg(short, long, value_enum, default_value_t=SchemeArg::Guess)]
         scheme: SchemeArg,
     },
 
     /// Increments a version formatted by `FORMAT` according to semantic and/or calendar rules.
-    ///
-    /// At least one of `--semantic` or the date providers must be specified. Otherwise, nothing
-    /// would change.
-    ///
-    /// Note that, however, it is possible to use a date provider, but the resulting version may not
-    /// increment anything at all (because its fields are identical to the current version's)
-    ///
-    /// # Date Providers
-    ///
-    /// Use one of `--utc`, `--local`, or `--date YYYY-MM-DD` to update date specifiers using the
-    /// referenced date Or, omit them to not increment the date.
-    Bump {
-        /// The version string to increment
+    Next {
+        /// The current version string
         version: String,
 
-        /// The format string to validate against
-        #[arg(short, long, required = true)]
+        /// A string defining the structure of the version string
+        #[arg(short, long)]
         format: String,
 
-        /// The semantic level to increment. Omit to not increment any semantic specifiers.
-        #[arg(short, long, value_enum)]
-        level: Option<SemanticArg>,
+        /// The semantic specifier to increment. Cal formats ignore this option entirely, and calsem
+        /// formats only accept `minor` or `patch`.
+        #[arg(short = 'l', long, value_enum)]
+        sem_level: Option<SemanticSpecifierArg>,
 
-        #[command(flatten)]
-        date: Option<DateArg>,
+        /// The date to update calendar specifiers. Only has an effect if the format/version
+        /// contain them. Can be either of the fixed strings `utc` or `local`, which use the current
+        /// date in those timezones, or a date in the format `Y-M-D`, for an explicit date made
+        /// from a year, month, and day.
+        #[arg(short, long, value_name = "utc|local|Y-M-D", value_parser = parse_date, default_value = "utc")]
+        date: Date,
+
+        /// Interpret the format as the given scheme.
+        #[arg(short, long, value_enum, default_value_t=SchemeArg::Guess)]
+        scheme: SchemeArg,
     },
 }
 
-type Output = (String, i32);
+#[derive(Debug)]
+#[repr(u8)]
+enum ExitCode {
+    Success = 0,
+    Failure = 1,
+    CliUsageError = 2,
+}
 
-fn main() {
-    let cli = Cli::parse();
-
-    println!("{:?}", &cli);
-
-    match do_work(cli) {
-        Ok((output, exit_code)) => {
-            println!("{output}");
-            std::process::exit(exit_code);
-        }
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
+impl From<&clap::error::Error> for ExitCode {
+    fn from(e: &clap::error::Error) -> Self {
+        match e.exit_code() {
+            0 => ExitCode::Success,
+            2 => ExitCode::CliUsageError,
+            _ => panic!("clap should only return exit codes 0-3"),
         }
     }
 }
 
-fn do_work(cli: Cli) -> Result<Output, VersionBumpCliError> {
+impl From<ExitCode> for std::process::ExitCode {
+    fn from(val: ExitCode) -> Self {
+        std::process::ExitCode::from(val as u8)
+    }
+}
+
+fn main() -> std::process::ExitCode {
+    let cli = Cli::parse();
+
+    println!("{:?}", &cli);
+
+    match run(cli) {
+        Ok((output, exit_code)) => {
+            println!("{output}");
+            exit_code
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+
+            // special handling for CLI usage error
+            if e == NextVerCliError::NoSemanticSpecifier {
+                ExitCode::CliUsageError
+            } else {
+                ExitCode::Failure
+            }
+        }
+    }
+    .into()
+}
+
+fn run(cli: Cli) -> Result<Output, NextVerCliError> {
     match cli.command {
         Some(Commands::Valid {
             format: format_str,
             version: version_str,
             scheme,
-        }) => Ok(if scheme.validate(&format_str, &version_str)? {
-            ("true".to_string(), 0)
-        } else {
-            ("false".to_string(), 1)
-        }),
-        Some(Commands::Bump {
+        }) => validate(&scheme, &format_str, &version_str),
+        Some(Commands::Next {
             format,
             version,
-            level,
+            sem_level: level,
             date,
-        }) => {
-            dbg!(&format, &version, &level, &date);
-            let semantic_level = level
-                .map(|semantic_level| semantic_level._to_semantic_level())
-                .as_ref();
-            // let date = date.map(|date| date.to_date()).transpose()?;
-            Ok(("todo".to_string(), 0))
-        }
+            scheme,
+        }) => next(&scheme, &format, &version, &date, level.as_ref()),
         None => unreachable!("clap should catch this no-subcommand case"),
     }
 }
@@ -248,17 +292,21 @@ fn do_work(cli: Cli) -> Result<Output, VersionBumpCliError> {
 mod tests {
     use super::*;
 
+    // TODO: add real tests
+
     #[test]
     fn test_some_sheeeeyt() {
         let res = Cli::try_parse_from([
             "nextver",
-            "valid",
+            "next",
             "2024.12",
             "--format",
-            "[YYYY].[MINOR]f",
+            "[YYYY].[MINOR]",
+            "--date",
+            "2024-12-01",
         ])
         .unwrap();
 
-        dbg!(do_work(res).unwrap());
+        dbg!(run(res).unwrap());
     }
 }

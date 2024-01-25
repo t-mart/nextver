@@ -11,73 +11,73 @@ use crate::{
 /// Errors that can occur in this library
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum VersionBumpError {
-    #[error("Version should change when incrementing calendar specifiers, but did not")]
+pub enum NextVerError {
+    #[error("date provided yielded an identical version")]
     NoCalendarChange,
 
-    #[error("Year `{year}` should not be negative when formatted`")]
+    #[error("year `{year}` should not be negative when formatted`")]
     NegativeYearValue { year: i32 },
 
-    #[error("Version `{version_string}` should match format `{format_string}`")]
+    #[error("version `{version_string}` should match format `{format_string}`")]
     VersionFormatMismatch {
         version_string: String,
         format_string: String,
     },
 
-    #[error("Unknown specifier pattern `{pattern}` in format")]
+    #[error("unknown specifier pattern `{pattern}` in format")]
     UnknownSpecifier { pattern: String },
 
     #[error(
-        "Specifier in format should be terminated with a closing square bracket (`]`): {pattern}"
+        "specifier in format should be terminated with a closing square bracket (`]`), got `{pattern}`"
     )]
     UnterminatedSpecifier { pattern: String },
 
-    #[error("To increment `{spec}`, it should be present in format")]
+    #[error("`{spec}` was not found in format, try using a format that is present")]
     SemanticSpecifierNotInFormat { spec: SemanticSpecifier },
 
-    #[error("Calendar specifiers should be present in format")]
+    #[error("calendar specifiers should be present in format")]
     CalendarNotInFormat,
 
-    #[error("Explicit year ({year}), month ({month}), and day ({day}) arguments cannot be made into a valid date")]
+    #[error("explicit year ({year}), month ({month}), and day ({day}) arguments cannot be made into a valid date")]
     InvalidDateArguments { year: i32, month: u32, day: u32 },
 
-    #[error("Specifiers must strictly decrease, got `{next}` after `{prev}`")]
+    #[error("specifiers must strictly decrease, got `{next}` after `{prev}`")]
     SpecifiersMustStrictlyDecrease {
         prev: &'static Specifier,
         next: &'static Specifier,
     },
 
-    #[error("In {scheme_name} format, first specifier should be {expected_first} got `{spec}`")]
+    #[error("in {scheme_name} format, first specifier should be {expected_first}, got `{spec}`")]
     WrongFirstSpecifier {
         spec: &'static Specifier,
         scheme_name: &'static str,
         expected_first: &'static str,
     },
 
-    #[error("All calendar specifiers should precede all semantic specifiers, got `{next}` after `{prev}`")]
+    #[error("all calendar specifiers should precede all semantic specifiers, got `{next}` after `{prev}`")]
     CalenderMustPrecedeSemantic {
         prev: &'static Specifier,
         next: &'static Specifier,
     },
 
-    #[error("{} should not be in a {} format", &MAJOR, CalSem.name())]
+    #[error("{} should not be in a {} format", &MAJOR, CalSem::name())]
     MajorInCalSemFormat,
 
-    #[error("Specifier `{next}` should be relative to its predecessor `{prev}`")]
+    #[error("specifier `{next}` should be relative to its predecessor `{prev}`")]
     SpecifierMustBeRelative {
         prev: &'static Specifier,
         next: &'static Specifier,
     },
 
-    #[error("Unacceptable specifier `{spec}` in {scheme_name} format")]
+    #[error("unacceptable specifier `{spec}` in {scheme_name} format")]
     UnacceptableSpecifier {
         spec: &'static Specifier,
         scheme_name: &'static str,
     },
 
-    #[error("Format should end with a semantic specifier, got `{last_spec}`")]
+    #[error("format should end with a semantic specifier, got `{last_spec}`")]
     FormatIncomplete { last_spec: &'static Specifier },
 
-    #[error("Format should contain at least one specifier")]
+    #[error("format should contain at least one specifier")]
     NoSpecifiersInFormat,
 }

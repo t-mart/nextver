@@ -1,6 +1,6 @@
 use crate::scheme::Scheme;
 use crate::specifier::{Specifier, ALL};
-use crate::{Version, VersionBumpError};
+use crate::{Version, NextVerError};
 use core::fmt;
 use regex::Regex;
 use std::cell::OnceCell;
@@ -129,7 +129,6 @@ See the specifier table [here](crate#specifier-table) for a list of all specifie
 **/
 #[derive(Debug, Clone)]
 pub struct Format<S: Scheme> {
-    // TODO: Consider making Version from this struct instead of having to pass them into Version
     pub(crate) tokens: Vec<FormatToken>,
     regex: OnceCell<Regex>,
     scheme: PhantomData<S>,
@@ -168,10 +167,10 @@ impl<S: Scheme> Format<S> {
     ///
     /// Returns an `Err` of ...
     ///
-    /// - [`VersionBumpError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
-    /// - [`VersionBumpError::UnterminatedSpecifier`] if a specifier is not terminated with a
+    /// - [`NextVerError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
+    /// - [`NextVerError::UnterminatedSpecifier`] if a specifier is not terminated with a
     ///   closing square bracket (`]`).
-    pub(crate) fn parse(format_str: &str, scheme: S) -> Result<Self, VersionBumpError> {
+    pub(crate) fn parse(format_str: &str) -> Result<Self, NextVerError> {
         let mut format = format_str;
         let mut parse_state = ParseState::new();
         let mut tokens = vec![];
@@ -191,7 +190,7 @@ impl<S: Scheme> Format<S> {
 
             if let Some(spec) = matched_spec {
                 // check that specifiers are in order]
-                scheme.advance_parse_state(&mut parse_state, spec)?;
+                S::advance_parse_state(&mut parse_state, spec)?;
                 tokens.push(FormatToken::Specifier(spec));
                 last_spec = Some(spec);
             } else {
@@ -210,12 +209,12 @@ impl<S: Scheme> Format<S> {
                         })
                         .ok_or_else(|| {
                             // didn't find closing bracket
-                            VersionBumpError::UnterminatedSpecifier {
+                            NextVerError::UnterminatedSpecifier {
                                 pattern: format.to_owned(),
                             }
                         })?;
                     // found closing, but unknown
-                    return Err(VersionBumpError::UnknownSpecifier {
+                    return Err(NextVerError::UnknownSpecifier {
                         pattern: format[..closing_index + 1].to_owned(),
                     });
                 } else if format.starts_with(r"\[") {
@@ -240,17 +239,17 @@ impl<S: Scheme> Format<S> {
         }
 
         if let Some(last_spec) = last_spec {
-            if !scheme.parse_state_is_final(&parse_state) {
-                return Err(VersionBumpError::FormatIncomplete { last_spec });
+            if !S::parse_state_is_final(&parse_state) {
+                return Err(NextVerError::FormatIncomplete { last_spec });
             }
         } else {
-            return Err(VersionBumpError::NoSpecifiersInFormat);
+            return Err(NextVerError::NoSpecifiersInFormat);
         }
 
         Ok(Self::from_tokens(tokens))
     }
 
-    pub fn parse_version(&self, version_str: &str) -> Result<Version<S>, VersionBumpError> {
+    pub fn parse_version(&self, version_str: &str) -> Result<Version<S>, NextVerError> {
         Version::parse(version_str, self)
     }
 }
@@ -263,11 +262,16 @@ impl<S: Scheme> PartialEq for Format<S> {
 }
 
 impl<S: Scheme> fmt::Display for Format<S> {
-    /// Display a format as a string.
+    /// Display a format as a format string.
     ///
     /// # Example
     ///
     /// ```
+    /// use nextver::prelude::*;
+    /// 
+    /// let format_str = "[YYYY].[MM].[DD]";
+    /// let format = Cal::new_format(format_str).unwrap();
+    /// assert_eq!(format_str, format.to_string());
     /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let format_string = self
@@ -483,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_bad_semantic_format() {
-        use VersionBumpError::*;
+        use NextVerError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -493,7 +497,7 @@ mod tests {
                 "[MINOR]",
                 WrongFirstSpecifier {
                     spec: &MINOR,
-                    scheme_name: Sem.name(),
+                    scheme_name: Sem::name(),
                     expected_first: "[MAJOR]",
                 },
             ),
@@ -515,7 +519,7 @@ mod tests {
                 "[MAJOR][YYYY]",
                 UnacceptableSpecifier {
                     spec: &FULL_YEAR,
-                    scheme_name: Sem.name(),
+                    scheme_name: Sem::name(),
                 },
             ),
         ];
@@ -528,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_bad_calendar_format() {
-        use VersionBumpError::*;
+        use NextVerError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -538,7 +542,7 @@ mod tests {
                 "[YYYY][MINOR]",
                 UnacceptableSpecifier {
                     spec: &MINOR,
-                    scheme_name: Cal.name(),
+                    scheme_name: Cal::name(),
                 },
             ),
             (
@@ -559,7 +563,7 @@ mod tests {
                 "[MM]",
                 WrongFirstSpecifier {
                     spec: &SHORT_MONTH,
-                    scheme_name: Cal.name(),
+                    scheme_name: Cal::name(),
                     expected_first: &YEAR_FORMAT_STRINGS,
                 },
             ),
@@ -573,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_bad_calendar_semantic_format() {
-        use VersionBumpError::*;
+        use NextVerError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -590,7 +594,7 @@ mod tests {
                 "[MM]",
                 WrongFirstSpecifier {
                     spec: &SHORT_MONTH,
-                    scheme_name: CalSem.name(),
+                    scheme_name: CalSem::name(),
                     expected_first: &YEAR_FORMAT_STRINGS,
                 },
             ),
@@ -636,7 +640,7 @@ mod tests {
             let actual = Sem::new_format(format);
             assert!(matches!(
                 actual,
-                Err(VersionBumpError::UnknownSpecifier { .. })
+                Err(NextVerError::UnknownSpecifier { .. })
             ));
         }
     }
@@ -648,7 +652,7 @@ mod tests {
             let actual = Sem::new_format(format);
             assert_eq!(
                 actual,
-                Err(VersionBumpError::UnterminatedSpecifier {
+                Err(NextVerError::UnterminatedSpecifier {
                     pattern: format.to_owned(),
                 })
             )

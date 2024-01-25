@@ -8,25 +8,36 @@
 //!
 //! ## Examples
 //!
-//! Below, the text in `[brackets]` is a specifier. See what they mean [here](#specifier-table).
+//! Below, the text in `[brackets]` is a specifier. See what they mean [here](#table).
 //!
 //! ```
+//! // quickly get a next version
 //! use nextver::prelude::*;
 //!
-//! let sem_fmt = Sem::new_format("[MAJOR].[MINOR].[PATCH]").unwrap();
-//! let sem_ver = sem_fmt.parse_version("1.2.3").unwrap();
-//! let incr_ver = sem_ver.increment(&SemanticSpecifier::Minor).unwrap();
-//! assert_eq!(incr_ver.to_string(), "1.3.0");
-//! assert!(incr_ver > sem_ver);
+//! let next = Sem::next(
+//!   "[MAJOR].[MINOR].[PATCH]",  // format string
+//!   "1.2.3",                    // current version string
+//!   &SemanticSpecifier::Minor   // the specifier to increment
+//! ).unwrap();
+//! assert_eq!(next.to_string(), "1.3.0");
+//! 
+//! let next = CalSem::next(
+//!   "[YYYY].[MM]-[PATCH]",       // format string
+//!   "2023.12-42",                // current version string
+//!   &Date::Explicit(2024, 1, 2), // the date to update to, or simply `Date::UtcNow`/`Date::LocalNow`
+//!   &CalSemSpecifier::Patch      // the specifier to increment, if no calendar update would occur
+//! ).unwrap();
+//! assert_eq!(next.to_string(), "2024.01-0");
 //! ```
 //!
 //! ```
+//! // or, break down the steps for reusability
 //! use nextver::prelude::*;
-//!
-//! let cal_sem_fmt = CalSem::new_format("[YYYY].[MM]-[PATCH]").unwrap();
-//! let cal_sem_ver = cal_sem_fmt.parse_version("2023.12-0").unwrap();
-//! let incr_ver = cal_sem_ver.update_or_increment(&Date::UtcNow, &CalSemSpecifier::Minor).unwrap();
-//! assert!(incr_ver > sem_ver);
+//! 
+//! let format = CalSem::new_format("[YYYY].[MM].[PATCH]");
+//! let version = Version::parse("2023.12.42", &format).unwrap();
+//! let next = version.next(&Date::Explicit(2024, 1, 2), &CalSemSpecifier::Patch).unwrap();
+//! assert!(next > version);
 //! ```
 //!
 //! ## Important Terms
@@ -37,7 +48,7 @@
 //! - **Format**: A string that defines the structure of a version string. It contains a sequence of
 //!   *specifiers* and *literal text*. It's modeled by the [`Format`] struct.
 //! - **Specifier**: A pattern in a format that dictates how to interpret and format its respective
-//!   part in a version. These are `[bracketed]` in a format.
+//!   part in a version. These are `[bracketed]` in a format string.
 //!
 //! ## Schemes
 //!
@@ -95,7 +106,7 @@
 //! // inconsistent: YYYY will consume first digit of a two-digit MM
 //! let format = Cal::new_format("[YYYY][MM]");
 //!
-//! // always consistent: zero-padded `0M` is always two digits
+//! // always consistent: zero-padded `0M` is non-greedy, always two digits
 //! let format = Cal::new_format("[YYYY][0M]");
 //! ```
 //! 
@@ -114,6 +125,8 @@
 //! let format = Sem::new_format(r"[MAJOR]-\[literal-text]");
 //! ```
 #![feature(lazy_cell)]
+// TODO: try to make us no-copy everywhere. this means that version and format lifetimes are based
+// on the strings they are created from.
 
 mod error;
 mod format;
@@ -121,7 +134,7 @@ mod scheme;
 mod specifier;
 mod version;
 
-pub use crate::error::VersionBumpError;
+pub use crate::error::NextVerError;
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
 pub use crate::specifier::SemanticSpecifier;
@@ -148,5 +161,7 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::Version;
     #[doc(no_inline)]
-    pub use crate::VersionBumpError;
+    pub use crate::NextVerError;
 }
+
+// TODO: we might be able do make this whole library non-allocating.

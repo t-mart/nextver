@@ -1,27 +1,27 @@
-use crate::error::VersionBumpError;
+use crate::error::NextVerError;
 use chrono::{Datelike, NaiveDate};
 use core::fmt::Display;
 use std::{fmt::Debug, sync::LazyLock};
 
-fn full_year(date: &NaiveDate) -> Result<u32, VersionBumpError> {
+fn full_year(date: &NaiveDate) -> Result<u32, NextVerError> {
     // Note: Spec doesn't comment about years that are not 4-digit, so allow them
     let year = date.year();
     if year <= 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(VersionBumpError::NegativeYearValue { year })
+        Err(NextVerError::NegativeYearValue { year })
     } else {
         Ok(year as u32)
     }
 }
 
-fn short_year(date: &NaiveDate) -> Result<u32, VersionBumpError> {
+fn short_year(date: &NaiveDate) -> Result<u32, NextVerError> {
     let year = date.year();
     // while `year % 100` might seem like the right call, the spec allows this to be >=100 so that,
     // for example, `2001`, `2101`, `3001` are disambiguated as 1, 101, and 1001, respectively.
     let diff = year - 2000;
     if diff < 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(VersionBumpError::NegativeYearValue { year })
+        Err(NextVerError::NegativeYearValue { year })
     } else {
         Ok(diff as u32)
     }
@@ -84,7 +84,7 @@ pub struct CalendarSpecifierData {
     pub(crate) format_pattern: &'static str,
     pub(crate) version_pattern: &'static str,
     pub(crate) value_format_fn: fn(&u32) -> String,
-    pub(crate) update_fn: fn(&NaiveDate) -> Result<u32, VersionBumpError>,
+    pub(crate) update_fn: fn(&NaiveDate) -> Result<u32, NextVerError>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl Display for CalendarSpecifier {
 }
 
 impl CalendarSpecifier {
-    pub(crate) fn update(&self, date: &NaiveDate) -> Result<u32, VersionBumpError> {
+    pub(crate) fn update(&self, date: &NaiveDate) -> Result<u32, NextVerError> {
         match self {
             CalendarSpecifier::Year(data)
             | CalendarSpecifier::Month(data)
@@ -292,7 +292,7 @@ mod tests {
             (ymd(10000, 1, 1), Ok(10000)),
             (
                 ymd(0, 1, 1),
-                Err(VersionBumpError::NegativeYearValue { year: 0 }),
+                Err(NextVerError::NegativeYearValue { year: 0 }),
             ),
         ];
         for (date, expected) in args {
@@ -311,7 +311,7 @@ mod tests {
             (ymd(12000, 1, 1), Ok(10000)),
             (
                 ymd(1999, 1, 1),
-                Err(VersionBumpError::NegativeYearValue { year: 1999 }),
+                Err(NextVerError::NegativeYearValue { year: 1999 }),
             ),
         ];
         for (date, expected) in args {
