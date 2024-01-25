@@ -1,37 +1,29 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use nextver::prelude::*;
 
-fn sem_ok_inputs() -> Vec<&'static str> {
-    vec![
-        "[MAJOR].[MINOR].[PATCH]",
-        "[MAJOR].[MINOR]",
-        "[MAJOR]",
-    ]
+fn format_sem_inputs() -> Vec<&'static str> {
+    vec!["[MAJOR].[MINOR].[PATCH]", "[MAJOR].[MINOR]", "[MAJOR]"]
 }
 
-fn parse_sem_ok(inputs: &[&str]) {
+fn format_sem(inputs: &[&str]) {
     for input in inputs {
         let res = Sem::new_format(input);
         assert!(res.is_ok());
     }
 }
 
-fn cal_ok_inputs() -> Vec<&'static str> {
-    vec![
-        "[YYYY].[MM].[DD]",
-        "[YYYY].[MM]",
-        "[YYYY]",
-    ]
+fn format_cal_inputs() -> Vec<&'static str> {
+    vec!["[YYYY].[MM].[DD]", "[YYYY].[MM]", "[YYYY]"]
 }
 
-fn parse_cal_ok(inputs: &[&str]) {
+fn format_cal(inputs: &[&str]) {
     for input in inputs {
         let res = Cal::new_format(input);
         assert!(res.is_ok());
     }
 }
 
-fn cal_sem_ok_inputs() -> Vec<&'static str> {
+fn format_calsem_inputs() -> Vec<&'static str> {
     vec![
         "[YYYY].[MM].[MINOR].[PATCH]",
         "[YYYY].[MM].[MINOR]",
@@ -42,35 +34,47 @@ fn cal_sem_ok_inputs() -> Vec<&'static str> {
     ]
 }
 
-fn parse_cal_sem_ok(inputs: &[&str]) {
+fn format_calsem(inputs: &[&str]) {
     for input in inputs {
         let res = CalSem::new_format(input);
         assert!(res.is_ok());
     }
 }
 
-fn new_cal_sem_version_inputs() -> Vec<(&'static str, &'static str)> {
+fn version_calsem_inputs() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("[YYYY].[MM].[MINOR].[PATCH]", "2020.01.01.01"),
-        ("[YYYY].[MM].[MINOR]", "2020.01.01"),
-        ("[YYYY].[MM].[DD].[MINOR]", "2020.01.01"),
-        ("[YYYY].[WW].[MINOR].[PATCH]", "2020.01.01"),
-        ("[YYYY].[WW].[MINOR]", "2020.01.01"),
+        ("[YYYY].[MM].[MINOR].[PATCH]", "2020.1.1.1263"),
+        ("[YY].[MM].[MINOR]", "20.1.633"),
+        ("[0Y].[0M].[DD].[MINOR]", "09.01.23.352"),
+        ("[YYYY].[0W].[MINOR].[PATCH]", "2020.01.2341.35"),
+        ("[YY].[WW].[MINOR]", "20.5.22345"),
     ]
 }
 
-fn new_cal_sem_version(inputs: &[(&str, &str)]) {
+fn version_calsem(inputs: &[(&str, &str)]) {
     for (format_str, version_str) in inputs {
         let res = CalSem::new_version(format_str, version_str);
         assert!(res.is_ok());
     }
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("parse_sem_ok", |b| b.iter(|| parse_sem_ok(black_box(&sem_ok_inputs()))));
-    c.bench_function("parse_cal_ok", |b| b.iter(|| parse_cal_ok(black_box(&cal_ok_inputs()))));
-    c.bench_function("parse_cal_sem_ok", |b| b.iter(|| parse_cal_sem_ok(black_box(&cal_sem_ok_inputs()))));
+fn format_benchmark(c: &mut Criterion) {
+    c.bench_function("format_sem", |b| {
+        b.iter(|| format_sem(black_box(&format_sem_inputs())))
+    });
+    c.bench_function("format_cal", |b| {
+        b.iter(|| format_cal(black_box(&format_cal_inputs())))
+    });
+    c.bench_function("format_calsem", |b| {
+        b.iter(|| format_calsem(black_box(&format_calsem_inputs())))
+    });
 }
 
-criterion_group!(benches, criterion_benchmark);
+fn version_benchmark(c: &mut Criterion) {
+    c.bench_function("version_calsem", |b| {
+        b.iter(|| version_calsem(black_box(&version_calsem_inputs())))
+    });
+}
+
+criterion_group!(benches, format_benchmark, version_benchmark);
 criterion_main!(benches);
