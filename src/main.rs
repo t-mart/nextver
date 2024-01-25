@@ -1,23 +1,10 @@
-#![feature(lazy_cell)]
-mod error;
-mod format;
-mod scheme;
-mod specifier;
-mod version;
-
-// don't technically need to `pub` use these, but linter complains of unused without it (despite
-// them being pub-used in lib.rs)
-pub use crate::error::NextVerError;
-pub use crate::format::Format;
-pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
-pub use crate::specifier::SemanticSpecifier;
-pub use crate::version::{CalSemSpecifier, Date, Version};
 use clap::{arg, command, Parser, Subcommand, ValueEnum};
+use nextver::prelude::*;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum NextVerCliError {
     #[error("{0}")]
-    LibraryError(#[from] NextVerError),
+    LibraryError(#[from] NextverError),
 
     #[error("format string was invalid for all schemes")]
     NoValidScheme,
@@ -29,7 +16,8 @@ pub enum NextVerCliError {
     // to be able to model options that are conditionally-required based on runtime things (i.e.,
     // our "guess" logic), and, indeed, that seems like a lot to ask. Nor can we use clap APIs to
     // render this error with the same styling/context/etc that clap does internally. So, we just do
-    // it ourselves.
+    // it ourselves. as a consequence, we now have coupling between this text and the clap option
+    // names.
     #[error("this scheme requires a semantic specifier, use `-l`/`--sem-level`")]
     NoSemanticSpecifier,
 }
@@ -297,7 +285,7 @@ mod tests {
         let res = Cli::try_parse_from([
             "nextver",
             "next",
-            "2024.12",
+            "2024.62",
             "--format",
             "[YYYY].[MINOR]",
             "--date",

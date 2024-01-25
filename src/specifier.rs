@@ -1,27 +1,27 @@
-use crate::error::NextVerError;
+use crate::error::NextverError;
 use chrono::{Datelike, NaiveDate};
 use core::fmt::Display;
 use std::{fmt::Debug, ops::Deref, sync::LazyLock};
 
-fn full_year(date: &NaiveDate) -> Result<u32, NextVerError> {
+fn full_year(date: &NaiveDate) -> Result<u32, NextverError> {
     // Note: Spec doesn't comment about years that are not 4-digit, so allow them
     let year = date.year();
     if year <= 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(NextVerError::NegativeYearValue { year })
+        Err(NextverError::NegativeYearValue { year })
     } else {
         Ok(year as u32)
     }
 }
 
-fn short_year(date: &NaiveDate) -> Result<u32, NextVerError> {
+fn short_year(date: &NaiveDate) -> Result<u32, NextverError> {
     let year = date.year();
     // while `year % 100` might seem like the right call, the spec allows this to be >=100 so that,
     // for example, `2001`, `2101`, `3001` are disambiguated as 1, 101, and 1001, respectively.
     let diff = year - 2000;
     if diff < 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(NextVerError::NegativeYearValue { year })
+        Err(NextverError::NegativeYearValue { year })
     } else {
         Ok(diff as u32)
     }
@@ -80,7 +80,7 @@ pub struct CalendarSpecifierData {
     pub(crate) format_pattern: &'static str,
     pub(crate) version_pattern: &'static str,
     pub(crate) zero_pad_len: Option<u8>,
-    pub(crate) update_fn: fn(&NaiveDate) -> Result<u32, NextVerError>,
+    pub(crate) update_fn: fn(&NaiveDate) -> Result<u32, NextverError>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -111,7 +111,7 @@ impl Deref for CalendarSpecifier {
 }
 
 impl CalendarSpecifier {
-    pub(crate) fn update(&self, date: &NaiveDate) -> Result<u32, NextVerError> {
+    pub(crate) fn update(&self, date: &NaiveDate) -> Result<u32, NextverError> {
         (self.update_fn)(date)
     }
 
@@ -277,7 +277,7 @@ mod tests {
             (ymd(10000, 1, 1), Ok(10000)),
             (
                 ymd(0, 1, 1),
-                Err(NextVerError::NegativeYearValue { year: 0 }),
+                Err(NextverError::NegativeYearValue { year: 0 }),
             ),
         ];
         for (date, expected) in args {
@@ -296,7 +296,7 @@ mod tests {
             (ymd(12000, 1, 1), Ok(10000)),
             (
                 ymd(1999, 1, 1),
-                Err(NextVerError::NegativeYearValue { year: 1999 }),
+                Err(NextverError::NegativeYearValue { year: 1999 }),
             ),
         ];
         for (date, expected) in args {

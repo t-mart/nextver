@@ -135,7 +135,7 @@ mod specifier;
 mod version;
 mod specifier2;
 
-pub use crate::error::NextVerError;
+pub use crate::error::NextverError;
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
 pub use crate::specifier::SemanticSpecifier;
@@ -162,7 +162,7 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::Version;
     #[doc(no_inline)]
-    pub use crate::NextVerError;
+    pub use crate::NextverError;
 }
 
 // TODO: we might be able do make this whole library non-allocating.

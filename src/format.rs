@@ -1,6 +1,6 @@
 use crate::scheme::Scheme;
 use crate::specifier::{Specifier, ALL};
-use crate::{NextVerError, Version};
+use crate::{NextverError, Version};
 use core::fmt::{self, Display};
 use regex::Regex;
 use std::borrow::Cow;
@@ -183,10 +183,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     ///
     /// Returns an `Err` of ...
     ///
-    /// - [`NextVerError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
-    /// - [`NextVerError::UnterminatedSpecifier`] if a specifier is not terminated with a
+    /// - [`NextverError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
+    /// - [`NextverError::UnterminatedSpecifier`] if a specifier is not terminated with a
     ///   closing square bracket (`]`).
-    pub(crate) fn parse(format_str: &'fs str) -> Result<Self, NextVerError> {
+    pub(crate) fn parse(format_str: &'fs str) -> Result<Self, NextverError> {
         let mut format = format_str;
         let mut parse_state = ParseState::new();
         let mut tokens = Vec::with_capacity(S::max_tokens());
@@ -232,12 +232,12 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                         })
                         .ok_or_else(|| {
                             // didn't find closing bracket
-                            NextVerError::UnterminatedSpecifier {
+                            NextverError::UnterminatedSpecifier {
                                 pattern: format.to_owned(),
                             }
                         })?;
                     // found closing, but unknown
-                    return Err(NextVerError::UnknownSpecifier {
+                    return Err(NextverError::UnknownSpecifier {
                         pattern: format[..closing_index + 1].to_owned(),
                     });
                 } else if format.starts_with(r"\[") {
@@ -278,10 +278,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
 
         if let Some(last_spec) = last_spec {
             if !S::parse_state_is_final(&parse_state) {
-                return Err(NextVerError::FormatIncomplete { last_spec });
+                return Err(NextverError::FormatIncomplete { last_spec });
             }
         } else {
-            return Err(NextVerError::NoSpecifiersInFormat);
+            return Err(NextverError::NoSpecifiersInFormat);
         }
 
         Ok(Self::from_tokens(tokens))
@@ -290,7 +290,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     pub fn parse_version<'vs>(
         &self,
         version_str: &'vs str,
-    ) -> Result<Version<'vs, S>, NextVerError> {
+    ) -> Result<Version<'vs, S>, NextverError> {
         Version::parse(version_str, self)
     }
 }
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn test_bad_semantic_format() {
-        use NextVerError::*;
+        use NextverError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_bad_calendar_format() {
-        use NextVerError::*;
+        use NextverError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_bad_calendar_semantic_format() {
-        use NextVerError::*;
+        use NextverError::*;
 
         // not exhaustive, just a sample
         let args = [
@@ -675,7 +675,7 @@ mod tests {
         let formats = ["[foo]", "[]", "[]]"];
         for format in formats {
             let actual = Sem::new_format(format);
-            assert!(matches!(actual, Err(NextVerError::UnknownSpecifier { .. })));
+            assert!(matches!(actual, Err(NextverError::UnknownSpecifier { .. })));
         }
     }
 
@@ -686,7 +686,7 @@ mod tests {
             let actual = Sem::new_format(format);
             assert_eq!(
                 actual,
-                Err(NextVerError::UnterminatedSpecifier {
+                Err(NextverError::UnterminatedSpecifier {
                     pattern: format.to_owned(),
                 })
             )

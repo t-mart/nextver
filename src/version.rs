@@ -1,5 +1,5 @@
 use crate::scheme::{Cal, CalSem, Scheme, Sem};
-use crate::{format::FormatToken, specifier::*, Format, NextVerError};
+use crate::{format::FormatToken, specifier::*, Format, NextverError};
 use chrono::{Local, NaiveDate, Utc};
 use core::{
     fmt::{self, Display},
@@ -36,12 +36,12 @@ pub enum Date {
 }
 
 impl Date {
-    fn get_date(&self) -> Result<NaiveDate, NextVerError> {
+    fn get_date(&self) -> Result<NaiveDate, NextverError> {
         match self {
             Self::UtcNow => Ok(Utc::now().date_naive()),
             Self::LocalNow => Ok(Local::now().date_naive()),
             Self::Explicit(year, month, day) => NaiveDate::from_ymd_opt(*year, *month, *day).ok_or(
-                NextVerError::InvalidDateArguments {
+                NextverError::InvalidDateArguments {
                     year: *year,
                     month: *month,
                     day: *day,
@@ -133,7 +133,7 @@ impl<'vs> PartialOrd for VersionToken<'vs> {
 /// Quick start:
 ///
 /// ```
-/// use nextver::{Version, NextVerError, SemanticLevel};
+/// use nextver::{Version, NextverError, SemanticLevel};
 ///
 /// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 /// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
@@ -141,7 +141,7 @@ impl<'vs> PartialOrd for VersionToken<'vs> {
 /// assert!(version < incremented);
 ///
 /// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-/// assert!(matches!(invalid, Err(NextVerError::VersionFormatMismatch {..})));
+/// assert!(matches!(invalid, Err(NextverError::VersionFormatMismatch {..})));
 /// ```
 ///
 /// Or, use a previously created [Format] object:
@@ -193,7 +193,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     }
 
     /// Parses a version string against a [Format], and returns a [Version] object if the version
-    /// string matches the format. Otherwise, returns a [NextVerError].
+    /// string matches the format. Otherwise, returns a [NextverError].
     ///
     /// If you just need a one-off parse or validation, you can use [Version::from_parsed_format] or
     /// [Version::is_valid] instead, which create [Format] objects implicitly.
@@ -206,10 +206,10 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     /// # Errors
     ///
     /// - If the version string does not match the format string, returns a
-    ///   [NextVerError::VersionFormatMismatch].
-    pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, NextVerError> {
+    ///   [NextverError::VersionFormatMismatch].
+    pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, NextverError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
-            return Err(NextVerError::VersionFormatMismatch {
+            return Err(NextverError::VersionFormatMismatch {
                 version_string: version_str.to_owned(),
                 format_string: format.to_string(),
             });
@@ -240,7 +240,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                 }
                 FormatToken::Literal(format_text) => {
                     if !text.eq(*format_text) {
-                        return Err(NextVerError::VersionFormatMismatch {
+                        return Err(NextverError::VersionFormatMismatch {
                             version_string: version_str.to_owned(),
                             format_string: format.to_string(),
                         });
@@ -258,9 +258,9 @@ impl<'vs, S: Scheme> Version<'vs, S> {
         })
     }
 
-    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextVerError>
+    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextverError>
     where
-        F: FnMut((&u32, &'static Specifier)) -> Result<u32, NextVerError>,
+        F: FnMut((&u32, &'static Specifier)) -> Result<u32, NextverError>,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
@@ -312,9 +312,9 @@ impl<'vs> Version<'vs, Sem> {
     ///
     /// # Errors
     ///
-    /// - Returns a [NextVerError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
+    /// - Returns a [NextverError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
-    pub fn next(&self, specifier: &SemanticSpecifier) -> Result<Self, NextVerError> {
+    pub fn next(&self, specifier: &SemanticSpecifier) -> Result<Self, NextverError> {
         // track if the semantic level was found in the format string.
         let mut spec_found = false;
 
@@ -344,7 +344,7 @@ impl<'vs> Version<'vs, Sem> {
         })?;
 
         if !spec_found {
-            return Err(NextVerError::SemanticSpecifierNotInFormat {
+            return Err(NextverError::SemanticSpecifierNotInFormat {
                 spec: specifier.clone(),
             });
         }
@@ -380,9 +380,9 @@ impl<'vs> Version<'vs, Cal> {
     /// # Errors
     ///
     /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
-    ///   date, returns a [NextVerError::InvalidDateArguments].
+    ///   date, returns a [NextverError::InvalidDateArguments].
     ///
-    ///  - Returns a [NextVerError::NegativeYearValue]...
+    ///  - Returns a [NextverError::NegativeYearValue]...
     ///
     ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
     ///      specifier.
@@ -392,7 +392,7 @@ impl<'vs> Version<'vs, Cal> {
     ///
     ///    This is because the formatted values would be negative, which would affect parsing. [See
     ///    specifiers for more](struct.Format.html#specifier-table).
-    pub fn next(&self, date: &Date) -> Result<Self, NextVerError> {
+    pub fn next(&self, date: &Date) -> Result<Self, NextverError> {
         let naive_date = date.get_date()?;
 
         // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
@@ -412,7 +412,7 @@ impl<'vs> Version<'vs, Cal> {
         })?;
 
         if !cal_updated {
-            return Err(NextVerError::NoCalendarChange);
+            return Err(NextverError::NoCalendarChange);
         }
 
         Ok(new_version)
@@ -448,7 +448,7 @@ impl<'vs> Version<'vs, CalSem> {
         &self,
         date: &Date,
         semantic_specifier: &CalSemSpecifier,
-    ) -> Result<Self, NextVerError> {
+    ) -> Result<Self, NextverError> {
         // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
         // map to a regular semantic specifier
@@ -495,7 +495,7 @@ impl<'vs> Version<'vs, CalSem> {
         })?;
 
         if !spec_found {
-            return Err(NextVerError::SemanticSpecifierNotInFormat {
+            return Err(NextverError::SemanticSpecifierNotInFormat {
                 spec: semantic_specifier.clone(),
             });
         }
@@ -540,7 +540,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -567,7 +567,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -594,7 +594,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -621,7 +621,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -647,7 +647,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -673,7 +673,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -707,7 +707,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -743,10 +743,19 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextVerError::VersionFormatMismatch { .. })
+                    Err(NextverError::VersionFormatMismatch { .. })
                 ));
             }
         }
+    }
+
+    #[test]
+    fn test_unicode_literal() {
+        let format_str = "👍[MAJOR]👯‍♀️";
+        let version_str = "👍1👯‍♀️";
+        let format = Sem::new_format(format_str).unwrap();
+        let version = Version::parse(version_str, &format);
+        assert!(version.is_ok());
     }
 
     //     // shows variance in all fields between zero-padded and non-zero-padded
@@ -927,7 +936,7 @@ mod tests {
     //             let version = Version::parse("1", format).unwrap();
     //             let actual = version.increment(&sem_level);
     //             assert_eq!(
-    //                 Err(NextVerError::SemanticLevelNotInFormat {
+    //                 Err(NextverError::SemanticLevelNotInFormat {
     //                     name: sem_level.name(),
     //                 }),
     //                 actual
@@ -944,7 +953,7 @@ mod tests {
     //         let actual = version.update(&DATE_INVALID);
     //         assert!(matches!(
     //             actual,
-    //             Err(NextVerError::InvalidDateArguments { .. })
+    //             Err(NextverError::InvalidDateArguments { .. })
     //         ));
     //     }
 
@@ -957,7 +966,7 @@ mod tests {
     //         dbg!(&actual);
     //         assert!(matches!(
     //             actual,
-    //             Err(NextVerError::NegativeYearValue { .. })
+    //             Err(NextverError::NegativeYearValue { .. })
     //         ));
     //     }
 
@@ -970,7 +979,7 @@ mod tests {
     //             let actual = version.update(&DATE_1998_01_01);
     //             assert!(matches!(
     //                 actual,
-    //                 Err(NextVerError::NegativeYearValue { .. })
+    //                 Err(NextverError::NegativeYearValue { .. })
     //             ));
     //         }
     //     }
@@ -986,7 +995,7 @@ mod tests {
     //             let format = Format::parse(format).unwrap();
     //             let version = Version::parse(version, format).unwrap();
     //             let actual = version.update(&DATE_2002_02_02);
-    //             assert_eq!(Err(NextVerError::NoCalendarChange), actual);
+    //             assert_eq!(Err(NextverError::NoCalendarChange), actual);
     //         }
     //     }
 

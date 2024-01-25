@@ -2,7 +2,7 @@ use crate::format::ParseState;
 use crate::specifier::{
     CalendarSpecifier, SemanticSpecifier, Specifier, MAJOR, MINOR, PATCH, YEAR_FORMAT_STRINGS,
 };
-use crate::{CalSemSpecifier, Date, Format, NextVerError, Version};
+use crate::{CalSemSpecifier, Date, Format, NextverError, Version};
 use core::fmt::Debug;
 
 pub(crate) mod priv_trait {
@@ -16,7 +16,7 @@ pub(crate) mod priv_trait {
         fn advance_parse_state(
             parse_state: &mut ParseState,
             next: &'static Specifier,
-        ) -> Result<(), NextVerError>;
+        ) -> Result<(), NextverError>;
 
         /// Returns true if the current state is an acceptable final state.
         ///
@@ -46,20 +46,20 @@ pub(crate) mod priv_trait {
 #[allow(private_bounds)]
 pub trait Scheme: priv_trait::Scheme {
     /// Create a new format from a format string for this scheme.
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextVerError>;
+    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError>;
 
     /// Returns a human readable name of the scheme for error messages.
     fn name() -> &'static str;
 
     /// Parses a version string against a format string, and returns a [Version] object if the
-    /// version string matches the format string. Otherwise, returns a [NextVerError].
+    /// version string matches the format string. Otherwise, returns a [NextverError].
     ///
     /// This is a convenience method that creates a temporary [Format] object and parses the version
     /// string against it.
     fn new_version<'vs>(
         format_str: &str,
         version_str: &'vs str,
-    ) -> Result<Version<'vs, Self>, NextVerError> {
+    ) -> Result<Version<'vs, Self>, NextverError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         Ok(version)
@@ -70,7 +70,7 @@ pub trait Scheme: priv_trait::Scheme {
     ///
     /// This is a convenience method that creates a temporary [Format] object and validates that the
     /// version string matches it.
-    fn is_valid(format_str: &str, version_str: &str) -> Result<bool, NextVerError> {
+    fn is_valid(format_str: &str, version_str: &str) -> Result<bool, NextverError> {
         let format = Self::new_format(format_str)?;
         Ok(Version::parse(version_str, &format).is_ok())
     }
@@ -84,7 +84,7 @@ impl Sem {
         format_str: &str,
         version_str: &str,
         specifier: &SemanticSpecifier,
-    ) -> Result<String, NextVerError> {
+    ) -> Result<String, NextverError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(specifier)?;
@@ -97,7 +97,7 @@ impl Scheme for Sem {
         "semantic"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextVerError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
         Format::parse(format_str)
     }
 }
@@ -110,8 +110,8 @@ impl priv_trait::Scheme for Sem {
     fn advance_parse_state(
         parse_state: &mut ParseState,
         next: &'static Specifier,
-    ) -> Result<(), NextVerError> {
-        use NextVerError::*;
+    ) -> Result<(), NextverError> {
+        use NextverError::*;
         use ParseState::*;
 
         let Specifier::Semantic(next_sem) = next else {
@@ -202,7 +202,7 @@ impl priv_trait::Scheme for Sem {
 pub struct Cal;
 
 impl Cal {
-    pub fn next(format_str: &str, version_str: &str, date: &Date) -> Result<String, NextVerError> {
+    pub fn next(format_str: &str, version_str: &str, date: &Date) -> Result<String, NextverError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(date)?;
@@ -215,7 +215,7 @@ impl Scheme for Cal {
         "calendar"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextVerError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
         Format::parse(format_str)
     }
 }
@@ -228,8 +228,8 @@ impl priv_trait::Scheme for Cal {
     fn advance_parse_state(
         parse_state: &mut ParseState,
         next: &'static Specifier,
-    ) -> Result<(), NextVerError> {
-        use NextVerError::*;
+    ) -> Result<(), NextverError> {
+        use NextverError::*;
         use ParseState::*;
 
         let Specifier::Calendar(next_cal) = next else {
@@ -330,7 +330,7 @@ impl CalSem {
         version_str: &str,
         date: &Date,
         semantic_specifier: &CalSemSpecifier,
-    ) -> Result<String, NextVerError> {
+    ) -> Result<String, NextverError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(date, semantic_specifier)?;
@@ -339,7 +339,7 @@ impl CalSem {
 }
 
 impl CalSem {
-    pub fn new_format(format_str: &str) -> Result<Format<Self>, NextVerError> {
+    pub fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
         Format::parse(format_str)
     }
 }
@@ -349,7 +349,7 @@ impl Scheme for CalSem {
         "calendar-semantic"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextVerError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
         Format::parse(format_str)
     }
 }
@@ -362,8 +362,8 @@ impl priv_trait::Scheme for CalSem {
     fn advance_parse_state(
         parse_state: &mut ParseState,
         next: &'static Specifier,
-    ) -> Result<(), NextVerError> {
-        use NextVerError::*;
+    ) -> Result<(), NextverError> {
+        use NextverError::*;
         use ParseState::*;
         *parse_state = match parse_state {
             Initial => match next {

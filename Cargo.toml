@@ -27,6 +27,14 @@ criterion = "0.5.1"
 itertools = "0.12.0"
 rstest = "0.18.2"
 
+[lib]
+name = "nextver"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nextver"
+path = "src/main.rs"
+
 [[bench]]
 name = "nextver_bench"
 harness = false

@@ -11,7 +11,7 @@ use crate::{
 /// Errors that can occur in this library
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum NextVerError {
+pub enum NextverError {
     #[error("date provided yielded an identical version")]
     NoCalendarChange,
 
