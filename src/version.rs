@@ -228,7 +228,7 @@ impl<S: Scheme> Version<S> {
         for (match_, format_token) in group_captures.zip(&format.tokens) {
             let Some(match_) = match_ else {
                 // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
-                // currently construct our format regex this way, but just in case. Plus we get a
+                // currently construct our format patterns this way, but just in case. Plus we get a
                 // destructure on the Option
                 continue;
             };
@@ -237,7 +237,7 @@ impl<S: Scheme> Version<S> {
 
             let token = match format_token {
                 FormatToken::Specifier(specifier) => {
-                    let value = text.parse().unwrap();
+                    let value = specifier.parse_value_str(&text)?;
                     VersionToken::Value {
                         value,
                         spec: specifier,
@@ -538,365 +538,402 @@ impl<S: Scheme> From<&Version<S>> for Format<S> {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     // shows variance in all fields between zero-padded and non-zero-padded
-//     static DATE_2002_02_02: Date = Date::Explicit {
-//         year: 2002,
-//         month: 2,
-//         day: 2,
-//     };
-//     // before year 2000
-//     static DATE_1998_01_01: Date = Date::Explicit {
-//         year: 1998,
-//         month: 1,
-//         day: 1,
-//     };
-//     // 1 BCE
-//     static DATE_BCE: Date = Date::Explicit {
-//         year: 0,
-//         month: 1,
-//         day: 1,
-//     };
-//     // invalid
-//     static DATE_INVALID: Date = Date::Explicit {
-//         year: 2001,
-//         month: 2,
-//         day: 30,
-//     };
+    #[test]
+    fn test_sem_not_zero_padded() {
+        let version_strs = ["01.2.3", "1.02.3", "1.2.03"];
 
-//     #[test]
-//     fn test_parse_ok() {
-//         let args = [
-//             ("[MAJOR]", vec!["1", "2", "10"]),
-//             ("[MINOR]", vec!["1", "2", "10"]),
-//             ("[PATCH]", vec!["1", "2", "10"]),
-//             ("[YYYY]", vec!["2001", "2002", "2010", "100000"]),
-//             ("[YY]", vec!["1", "2", "10"]),
-//             ("[0Y]", vec!["01", "02", "10"]),
-//             ("[MM]", vec!["1", "2", "10"]),
-//             ("[0M]", vec!["01", "02", "10"]),
-//             ("[WW]", vec!["1", "2", "10"]),
-//             ("[0W]", vec!["01", "02", "10"]),
-//             ("[DD]", vec!["1", "2", "10"]),
-//             ("[0D]", vec!["01", "02", "10"]),
-//             (r"\[MAJOR]", vec!["[MAJOR]"]),
-//             (
-//                 "The quick brown fox jumps over the lazy dog",
-//                 vec!["The quick brown fox jumps over the lazy dog"],
-//             ),
-//         ];
+        for version_str in &version_strs {
+            let format = Sem::new_format("[MAJOR].[MINOR].[PATCH]").unwrap();
+            let version = Version::parse(version_str, &format);
+            assert!(matches!(
+                version,
+                Err(NextVerError::SpecifierMayNotBeZeroPadded { .. })
+            ));
+        }
+    }
 
-//         for (format, version_strs) in args {
-//             let format = Format::parse(format).unwrap();
-//             for version_str in version_strs {
-//                 let version = Version::parse(version_str, format.clone());
-//                 assert!(version.is_ok());
-//                 let version = version.unwrap();
-//                 assert_eq!(version.to_string(), version_str.to_string());
-//                 assert_eq!(Format::from(&version), format);
-//             }
-//         }
-//     }
+    /// cal specifiers that aren't zero-padded shouldn't be allowed to be parsed as such.
+    ///
+    /// this is also sufficient to cover calsem.
+    #[test]
+    fn test_cal_not_zero_padded() {
+        let args = [
+            ("[YYYY].[MM].[DD]", "0100.2.3"),
+            ("[YYYY].[MM].[DD]", "1000.02.3"),
+            ("[YYYY].[MM].[DD]", "1000.2.03"),
+            ("[YYYY].[WW]", "1001.02"),
+            ("[YY]", "01")
+        ];
 
-//     // #[test]
-//     // fn test_increment_ok() {
-//     //     let args = [
-//     //         (
-//     //             "[MAJOR].[MINOR].[PATCH]",
-//     //             "1.2.3",
-//     //             (Some(&SemanticLevel::Major), None),
-//     //             "2.0.0",
-//     //         ),
-//     //         (
-//     //             "[MAJOR].[MINOR].[PATCH]",
-//     //             "1.2.3",
-//     //             (Some(&SemanticLevel::Minor), None),
-//     //             "1.3.0",
-//     //         ),
-//     //         (
-//     //             "[MAJOR].[MINOR].[PATCH]",
-//     //             "1.2.3",
-//     //             (Some(&SemanticLevel::Patch), None),
-//     //             "1.2.4",
-//     //         ),
-//     //         (
-//     //             "[YYYY].[MM].[DD]",
-//     //             "2001.1.1",
-//     //             (None, Some(&DATE_2002_02_02)),
-//     //             "2002.2.2",
-//     //         ),
-//     //         (
-//     //             "[YYYY].[PATCH]",
-//     //             "2001.1",
-//     //             (None, Some(&DATE_2002_02_02)),
-//     //             "2002.1",
-//     //         ),
-//     //         (
-//     //             "[YYYY].[PATCH]",
-//     //             "2001.1",
-//     //             (Some(&SemanticLevel::Patch), None),
-//     //             "2001.2",
-//     //         ),
-//     //         (
-//     //             "[YYYY].[PATCH]",
-//     //             "2001.1",
-//     //             (Some(&SemanticLevel::Patch), Some(&DATE_2002_02_02)),
-//     //             "2002.2",
-//     //         ),
-//     //     ];
-//     //     for (fmt_str, ver_str, (sem_level, date), expected) in args {
-//     //         let format = Format::parse(fmt_str).unwrap();
-//     //         let version = Version::parse(ver_str, format).unwrap();
-//     //         let next_version = version.increment(sem_level, date).unwrap();
-//     //         assert_eq!(expected.to_string(), next_version.to_string());
+        for (format_str, version_str) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            assert!(matches!(
+                version,
+                Err(NextVerError::SpecifierMayNotBeZeroPadded { .. })
+            ));
+        }
+    }
 
-//     //         // next version should always be greater than current version
-//     //         assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
-//     //     }
-//     // }
+    //     // shows variance in all fields between zero-padded and non-zero-padded
+    //     static DATE_2002_02_02: Date = Date::Explicit {
+    //         year: 2002,
+    //         month: 2,
+    //         day: 2,
+    //     };
+    //     // before year 2000
+    //     static DATE_1998_01_01: Date = Date::Explicit {
+    //         year: 1998,
+    //         month: 1,
+    //         day: 1,
+    //     };
+    //     // 1 BCE
+    //     static DATE_BCE: Date = Date::Explicit {
+    //         year: 0,
+    //         month: 1,
+    //         day: 1,
+    //     };
+    //     // invalid
+    //     static DATE_INVALID: Date = Date::Explicit {
+    //         year: 2001,
+    //         month: 2,
+    //         day: 30,
+    //     };
 
-//     #[test]
-//     fn test_increment_semantic_ok() {
-//         let args = [
-//             (
-//                 "[MAJOR].[MINOR].[PATCH]",
-//                 "1.2.3",
-//                 SemanticLevel::Major,
-//                 "2.0.0",
-//             ),
-//             (
-//                 "[MAJOR].[MINOR].[PATCH]",
-//                 "1.2.3",
-//                 SemanticLevel::Minor,
-//                 "1.3.0",
-//             ),
-//             (
-//                 "[MAJOR].[MINOR].[PATCH]",
-//                 "1.2.3",
-//                 SemanticLevel::Patch,
-//                 "1.2.4",
-//             ),
-//         ];
-//         for (fmt_str, ver_str, sem_level, expected) in args {
-//             let format = Format::parse(fmt_str).unwrap();
-//             let version = Version::parse(ver_str, format).unwrap();
-//             let next_version = version.increment(&sem_level).unwrap();
-//             assert_eq!(expected.to_string(), next_version.to_string());
+    //     #[test]
+    //     fn test_parse_ok() {
+    //         let args = [
+    //             ("[MAJOR]", vec!["1", "2", "10"]),
+    //             ("[MINOR]", vec!["1", "2", "10"]),
+    //             ("[PATCH]", vec!["1", "2", "10"]),
+    //             ("[YYYY]", vec!["2001", "2002", "2010", "100000"]),
+    //             ("[YY]", vec!["1", "2", "10"]),
+    //             ("[0Y]", vec!["01", "02", "10"]),
+    //             ("[MM]", vec!["1", "2", "10"]),
+    //             ("[0M]", vec!["01", "02", "10"]),
+    //             ("[WW]", vec!["1", "2", "10"]),
+    //             ("[0W]", vec!["01", "02", "10"]),
+    //             ("[DD]", vec!["1", "2", "10"]),
+    //             ("[0D]", vec!["01", "02", "10"]),
+    //             (r"\[MAJOR]", vec!["[MAJOR]"]),
+    //             (
+    //                 "The quick brown fox jumps over the lazy dog",
+    //                 vec!["The quick brown fox jumps over the lazy dog"],
+    //             ),
+    //         ];
 
-//             // next version should always be greater than current version
-//             assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
-//         }
-//     }
+    //         for (format, version_strs) in args {
+    //             let format = Format::parse(format).unwrap();
+    //             for version_str in version_strs {
+    //                 let version = Version::parse(version_str, format.clone());
+    //                 assert!(version.is_ok());
+    //                 let version = version.unwrap();
+    //                 assert_eq!(version.to_string(), version_str.to_string());
+    //                 assert_eq!(Format::from(&version), format);
+    //             }
+    //         }
+    //     }
 
-//     #[test]
-//     fn test_increment_calendar_ok() {
-//         let args = [("[YYYY].[MM].[DD]", "2001.1.1", &DATE_2002_02_02, "2002.2.2")];
-//         for (fmt_str, ver_str, date, expected) in args {
-//             let format = Format::parse(fmt_str).unwrap();
-//             let version = Version::parse(ver_str, format).unwrap();
-//             let next_version = version.update(date).unwrap();
-//             assert_eq!(expected.to_string(), next_version.to_string());
+    //     // #[test]
+    //     // fn test_increment_ok() {
+    //     //     let args = [
+    //     //         (
+    //     //             "[MAJOR].[MINOR].[PATCH]",
+    //     //             "1.2.3",
+    //     //             (Some(&SemanticLevel::Major), None),
+    //     //             "2.0.0",
+    //     //         ),
+    //     //         (
+    //     //             "[MAJOR].[MINOR].[PATCH]",
+    //     //             "1.2.3",
+    //     //             (Some(&SemanticLevel::Minor), None),
+    //     //             "1.3.0",
+    //     //         ),
+    //     //         (
+    //     //             "[MAJOR].[MINOR].[PATCH]",
+    //     //             "1.2.3",
+    //     //             (Some(&SemanticLevel::Patch), None),
+    //     //             "1.2.4",
+    //     //         ),
+    //     //         (
+    //     //             "[YYYY].[MM].[DD]",
+    //     //             "2001.1.1",
+    //     //             (None, Some(&DATE_2002_02_02)),
+    //     //             "2002.2.2",
+    //     //         ),
+    //     //         (
+    //     //             "[YYYY].[PATCH]",
+    //     //             "2001.1",
+    //     //             (None, Some(&DATE_2002_02_02)),
+    //     //             "2002.1",
+    //     //         ),
+    //     //         (
+    //     //             "[YYYY].[PATCH]",
+    //     //             "2001.1",
+    //     //             (Some(&SemanticLevel::Patch), None),
+    //     //             "2001.2",
+    //     //         ),
+    //     //         (
+    //     //             "[YYYY].[PATCH]",
+    //     //             "2001.1",
+    //     //             (Some(&SemanticLevel::Patch), Some(&DATE_2002_02_02)),
+    //     //             "2002.2",
+    //     //         ),
+    //     //     ];
+    //     //     for (fmt_str, ver_str, (sem_level, date), expected) in args {
+    //     //         let format = Format::parse(fmt_str).unwrap();
+    //     //         let version = Version::parse(ver_str, format).unwrap();
+    //     //         let next_version = version.increment(sem_level, date).unwrap();
+    //     //         assert_eq!(expected.to_string(), next_version.to_string());
 
-//             // next version should always be greater than current version
-//             assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
-//         }
-//     }
+    //     //         // next version should always be greater than current version
+    //     //         assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
+    //     //     }
+    //     // }
 
-//     #[test]
-//     fn test_semantic_level_not_found() {
-//         let args = [
-//             ("[MINOR]", SemanticLevel::Major),
-//             ("[PATCH]", SemanticLevel::Major),
-//             ("[MAJOR]", SemanticLevel::Minor),
-//             ("[PATCH]", SemanticLevel::Minor),
-//             ("[MAJOR]", SemanticLevel::Patch),
-//             ("[MINOR]", SemanticLevel::Patch),
-//         ];
-//         for (format, sem_level) in args {
-//             let format = Format::parse(format).unwrap();
-//             let version = Version::parse("1", format).unwrap();
-//             let actual = version.increment(&sem_level);
-//             assert_eq!(
-//                 Err(NextVerError::SemanticLevelNotInFormat {
-//                     name: sem_level.name(),
-//                 }),
-//                 actual
-//             );
-//         }
-//     }
+    //     #[test]
+    //     fn test_increment_semantic_ok() {
+    //         let args = [
+    //             (
+    //                 "[MAJOR].[MINOR].[PATCH]",
+    //                 "1.2.3",
+    //                 SemanticLevel::Major,
+    //                 "2.0.0",
+    //             ),
+    //             (
+    //                 "[MAJOR].[MINOR].[PATCH]",
+    //                 "1.2.3",
+    //                 SemanticLevel::Minor,
+    //                 "1.3.0",
+    //             ),
+    //             (
+    //                 "[MAJOR].[MINOR].[PATCH]",
+    //                 "1.2.3",
+    //                 SemanticLevel::Patch,
+    //                 "1.2.4",
+    //             ),
+    //         ];
+    //         for (fmt_str, ver_str, sem_level, expected) in args {
+    //             let format = Format::parse(fmt_str).unwrap();
+    //             let version = Version::parse(ver_str, format).unwrap();
+    //             let next_version = version.increment(&sem_level).unwrap();
+    //             assert_eq!(expected.to_string(), next_version.to_string());
 
-//     #[test]
-//     fn test_invalid_explicit_date() {
-//         // there are various ways a date can be invalid, but we only test one here. the details
-//         // are left to chrono.
-//         let format = Format::parse("[YYYY].[MM].[DD]").unwrap();
-//         let version = Version::parse("2001.1.1", format).unwrap();
-//         let actual = version.update(&DATE_INVALID);
-//         assert!(matches!(
-//             actual,
-//             Err(NextVerError::InvalidDateArguments { .. })
-//         ));
-//     }
+    //             // next version should always be greater than current version
+    //             assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
+    //         }
+    //     }
 
-//     #[test]
-//     fn test_full_year_before_0() {
-//         let format = Format::parse("[YYYY]").unwrap();
-//         let version = Version::parse("1997", format).unwrap();
-//         // note we're doing a backwards year jump here. atypical, but possible.
-//         let actual = version.update(&DATE_BCE);
-//         dbg!(&actual);
-//         assert!(matches!(
-//             actual,
-//             Err(NextVerError::NegativeYearValue { .. })
-//         ));
-//     }
+    //     #[test]
+    //     fn test_increment_calendar_ok() {
+    //         let args = [("[YYYY].[MM].[DD]", "2001.1.1", &DATE_2002_02_02, "2002.2.2")];
+    //         for (fmt_str, ver_str, date, expected) in args {
+    //             let format = Format::parse(fmt_str).unwrap();
+    //             let version = Version::parse(ver_str, format).unwrap();
+    //             let next_version = version.update(date).unwrap();
+    //             assert_eq!(expected.to_string(), next_version.to_string());
 
-//     #[test]
-//     fn test_full_year_before_2000() {
-//         let format_strings = ["[YY]", "[0Y]"];
-//         for format_string in format_strings {
-//             let format = Format::parse(format_string).unwrap();
-//             let version = Version::parse("97", format).unwrap();
-//             let actual = version.update(&DATE_1998_01_01);
-//             assert!(matches!(
-//                 actual,
-//                 Err(NextVerError::NegativeYearValue { .. })
-//             ));
-//         }
-//     }
+    //             // next version should always be greater than current version
+    //             assert_eq!(Some(Ordering::Greater), next_version.partial_cmp(&version));
+    //         }
+    //     }
 
-//     #[test]
-//     fn test_no_change() {
-//         let args = [
-//             ("[YYYY]", "2002"),
-//             ("[YYYY].[MM].[DD]", "2002.2.2"),
-//             ("all literal", "all literal"),
-//         ];
-//         for (format, version) in args {
-//             let format = Format::parse(format).unwrap();
-//             let version = Version::parse(version, format).unwrap();
-//             let actual = version.update(&DATE_2002_02_02);
-//             assert_eq!(Err(NextVerError::NoCalendarChange), actual);
-//         }
-//     }
+    //     #[test]
+    //     fn test_semantic_level_not_found() {
+    //         let args = [
+    //             ("[MINOR]", SemanticLevel::Major),
+    //             ("[PATCH]", SemanticLevel::Major),
+    //             ("[MAJOR]", SemanticLevel::Minor),
+    //             ("[PATCH]", SemanticLevel::Minor),
+    //             ("[MAJOR]", SemanticLevel::Patch),
+    //             ("[MINOR]", SemanticLevel::Patch),
+    //         ];
+    //         for (format, sem_level) in args {
+    //             let format = Format::parse(format).unwrap();
+    //             let version = Version::parse("1", format).unwrap();
+    //             let actual = version.increment(&sem_level);
+    //             assert_eq!(
+    //                 Err(NextVerError::SemanticLevelNotInFormat {
+    //                     name: sem_level.name(),
+    //                 }),
+    //                 actual
+    //             );
+    //         }
+    //     }
 
-//     /// tests that consecutive greedy specifiers can match against the next token's digits. this
-//     /// behavior is expected, even if it's not ideal.
-//     #[test]
-//     fn test_greedy_consecutive_specifiers() {
-//         let args: &[(&str, [u32; 2], [u32; 2])] = &[
-//             ("[YYYY][MM]", [2024, 11], [20241, 1]),
-//             ("[MAJOR][MINOR]", [1, 23], [12, 3]),
-//         ];
-//         for (format, [expected1, expected2], actual) in args {
-//             let format = Format::parse(format).unwrap();
-//             let version_str = format!("{expected1}{expected2}");
-//             let version = Version::parse(&version_str, format).unwrap();
-//             for (idx, actual_val) in actual.iter().enumerate() {
-//                 assert!(
-//                     matches!(version.tokens[idx], VersionToken::Value { value, .. } if value == *actual_val)
-//                 );
-//             }
-//         }
-//     }
+    //     #[test]
+    //     fn test_invalid_explicit_date() {
+    //         // there are various ways a date can be invalid, but we only test one here. the details
+    //         // are left to chrono.
+    //         let format = Format::parse("[YYYY].[MM].[DD]").unwrap();
+    //         let version = Version::parse("2001.1.1", format).unwrap();
+    //         let actual = version.update(&DATE_INVALID);
+    //         assert!(matches!(
+    //             actual,
+    //             Err(NextVerError::InvalidDateArguments { .. })
+    //         ));
+    //     }
 
-//     #[test]
-//     fn test_cmp() {
-//         let args = [
-//             (
-//                 "[YYYY].[MM].[0D]",
-//                 ("2001.1.01", "2001.1.02"),
-//                 Ordering::Less,
-//             ),
-//             (
-//                 "[YYYY].[MM].[0D]",
-//                 ("2001.1.01", "2001.1.01"),
-//                 Ordering::Equal,
-//             ),
-//             (
-//                 "[MAJOR].[MINOR].[PATCH]",
-//                 ("1.2.3", "1.2.4"),
-//                 Ordering::Less,
-//             ),
-//             (
-//                 "[MAJOR].[MINOR].[PATCH]",
-//                 ("1.2.3", "1.2.3"),
-//                 Ordering::Equal,
-//             ),
-//         ];
-//         for (fmt_str, (ver_str_a, ver_str_b), expected) in args {
-//             let format = Format::parse(fmt_str).unwrap();
-//             let version_a = Version::parse(ver_str_a, format.clone()).unwrap();
-//             let version_b = Version::parse(ver_str_b, format).unwrap();
-//             assert_eq!(Some(expected), version_a.partial_cmp(&version_b));
-//         }
-//     }
+    //     #[test]
+    //     fn test_full_year_before_0() {
+    //         let format = Format::parse("[YYYY]").unwrap();
+    //         let version = Version::parse("1997", format).unwrap();
+    //         // note we're doing a backwards year jump here. atypical, but possible.
+    //         let actual = version.update(&DATE_BCE);
+    //         dbg!(&actual);
+    //         assert!(matches!(
+    //             actual,
+    //             Err(NextVerError::NegativeYearValue { .. })
+    //         ));
+    //     }
 
-//     #[test]
-//     fn test_cmp_uncomparable() {
-//         let version = "10"; // same version
+    //     #[test]
+    //     fn test_full_year_before_2000() {
+    //         let format_strings = ["[YY]", "[0Y]"];
+    //         for format_string in format_strings {
+    //             let format = Format::parse(format_string).unwrap();
+    //             let version = Version::parse("97", format).unwrap();
+    //             let actual = version.update(&DATE_1998_01_01);
+    //             assert!(matches!(
+    //                 actual,
+    //                 Err(NextVerError::NegativeYearValue { .. })
+    //             ));
+    //         }
+    //     }
 
-//         // but different formats
-//         let format_a = Format::parse("[0D]").unwrap();
-//         let format_b = Format::parse("[DD]").unwrap();
+    //     #[test]
+    //     fn test_no_change() {
+    //         let args = [
+    //             ("[YYYY]", "2002"),
+    //             ("[YYYY].[MM].[DD]", "2002.2.2"),
+    //             ("all literal", "all literal"),
+    //         ];
+    //         for (format, version) in args {
+    //             let format = Format::parse(format).unwrap();
+    //             let version = Version::parse(version, format).unwrap();
+    //             let actual = version.update(&DATE_2002_02_02);
+    //             assert_eq!(Err(NextVerError::NoCalendarChange), actual);
+    //         }
+    //     }
 
-//         let version_a = Version::parse(version, format_a).unwrap();
-//         let version_b = Version::parse(version, format_b).unwrap();
-//         assert!(version_a.partial_cmp(&version_b).is_none());
-//         assert!(!version_a.eq(&version_b));
-//     }
+    //     /// tests that consecutive greedy specifiers can match against the next token's digits. this
+    //     /// behavior is expected, even if it's not ideal.
+    //     #[test]
+    //     fn test_greedy_consecutive_specifiers() {
+    //         let args: &[(&str, [u32; 2], [u32; 2])] = &[
+    //             ("[YYYY][MM]", [2024, 11], [20241, 1]),
+    //             ("[MAJOR][MINOR]", [1, 23], [12, 3]),
+    //         ];
+    //         for (format, [expected1, expected2], actual) in args {
+    //             let format = Format::parse(format).unwrap();
+    //             let version_str = format!("{expected1}{expected2}");
+    //             let version = Version::parse(&version_str, format).unwrap();
+    //             for (idx, actual_val) in actual.iter().enumerate() {
+    //                 assert!(
+    //                     matches!(version.tokens[idx], VersionToken::Value { value, .. } if value == *actual_val)
+    //                 );
+    //             }
+    //         }
+    //     }
 
-//     #[test]
-//     fn test_cmp_diff_but_equal_formats() {
-//         let version = "10"; // same version
-//         let format = "[0D]"; // same format
+    //     #[test]
+    //     fn test_cmp() {
+    //         let args = [
+    //             (
+    //                 "[YYYY].[MM].[0D]",
+    //                 ("2001.1.01", "2001.1.02"),
+    //                 Ordering::Less,
+    //             ),
+    //             (
+    //                 "[YYYY].[MM].[0D]",
+    //                 ("2001.1.01", "2001.1.01"),
+    //                 Ordering::Equal,
+    //             ),
+    //             (
+    //                 "[MAJOR].[MINOR].[PATCH]",
+    //                 ("1.2.3", "1.2.4"),
+    //                 Ordering::Less,
+    //             ),
+    //             (
+    //                 "[MAJOR].[MINOR].[PATCH]",
+    //                 ("1.2.3", "1.2.3"),
+    //                 Ordering::Equal,
+    //             ),
+    //         ];
+    //         for (fmt_str, (ver_str_a, ver_str_b), expected) in args {
+    //             let format = Format::parse(fmt_str).unwrap();
+    //             let version_a = Version::parse(ver_str_a, format.clone()).unwrap();
+    //             let version_b = Version::parse(ver_str_b, format).unwrap();
+    //             assert_eq!(Some(expected), version_a.partial_cmp(&version_b));
+    //         }
+    //     }
 
-//         // different objects of the same format
-//         let format_a = Format::parse(format).unwrap();
-//         let format_b = Format::parse(format).unwrap();
+    //     #[test]
+    //     fn test_cmp_uncomparable() {
+    //         let version = "10"; // same version
 
-//         let version_a = Version::parse(version, format_a).unwrap();
-//         let version_b = Version::parse(version, format_b).unwrap();
-//         assert_eq!(Some(Ordering::Equal), version_a.partial_cmp(&version_b));
-//     }
+    //         // but different formats
+    //         let format_a = Format::parse("[0D]").unwrap();
+    //         let format_b = Format::parse("[DD]").unwrap();
 
-//     #[test]
-//     fn test_empty() {
-//         let format = Format::parse("").unwrap();
-//         let version = Version::parse("", format).unwrap();
-//         assert_eq!("", version.to_string());
-//     }
+    //         let version_a = Version::parse(version, format_a).unwrap();
+    //         let version_b = Version::parse(version, format_b).unwrap();
+    //         assert!(version_a.partial_cmp(&version_b).is_none());
+    //         assert!(!version_a.eq(&version_b));
+    //     }
 
-//     #[test]
-//     fn test_increment_calendar_with_semantic_fallback_falls_back() {
-//         let format = Format::parse("[YYYY].[PATCH]").unwrap();
-//         let version = Version::parse("2023.1", format).unwrap();
-//         let actual = version.update_or_increment(
-//             &Date::Explicit {
-//                 year: 2023, // same year
-//                 month: 2,
-//                 day: 3,
-//             },
-//             &SemanticLevel::Patch,
-//         );
-//         assert_eq!("2023.2", actual.unwrap().to_string());
-//     }
+    //     #[test]
+    //     fn test_cmp_diff_but_equal_formats() {
+    //         let version = "10"; // same version
+    //         let format = "[0D]"; // same format
 
-//     #[test]
-//     fn test_increment_calendar_with_semantic_fallback_calendar_increment() {
-//         let format = Format::parse("[YYYY].[PATCH]").unwrap();
-//         let version = Version::parse("2023.1", format).unwrap();
-//         let actual = version.update_or_increment(
-//             &Date::Explicit {
-//                 year: 2024, // updated year
-//                 month: 2,
-//                 day: 3,
-//             },
-//             &SemanticLevel::Patch,
-//         );
-//         assert_eq!("2024.1", actual.unwrap().to_string());
-//     }
-// }
+    //         // different objects of the same format
+    //         let format_a = Format::parse(format).unwrap();
+    //         let format_b = Format::parse(format).unwrap();
+
+    //         let version_a = Version::parse(version, format_a).unwrap();
+    //         let version_b = Version::parse(version, format_b).unwrap();
+    //         assert_eq!(Some(Ordering::Equal), version_a.partial_cmp(&version_b));
+    //     }
+
+    //     #[test]
+    //     fn test_empty() {
+    //         let format = Format::parse("").unwrap();
+    //         let version = Version::parse("", format).unwrap();
+    //         assert_eq!("", version.to_string());
+    //     }
+
+    //     #[test]
+    //     fn test_increment_calendar_with_semantic_fallback_falls_back() {
+    //         let format = Format::parse("[YYYY].[PATCH]").unwrap();
+    //         let version = Version::parse("2023.1", format).unwrap();
+    //         let actual = version.update_or_increment(
+    //             &Date::Explicit {
+    //                 year: 2023, // same year
+    //                 month: 2,
+    //                 day: 3,
+    //             },
+    //             &SemanticLevel::Patch,
+    //         );
+    //         assert_eq!("2023.2", actual.unwrap().to_string());
+    //     }
+
+    //     #[test]
+    //     fn test_increment_calendar_with_semantic_fallback_calendar_increment() {
+    //         let format = Format::parse("[YYYY].[PATCH]").unwrap();
+    //         let version = Version::parse("2023.1", format).unwrap();
+    //         let actual = version.update_or_increment(
+    //             &Date::Explicit {
+    //                 year: 2024, // updated year
+    //                 month: 2,
+    //                 day: 3,
+    //             },
+    //             &SemanticLevel::Patch,
+    //         );
+    //         assert_eq!("2024.1", actual.unwrap().to_string());
+    //     }
+}

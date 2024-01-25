@@ -1,7 +1,7 @@
 use crate::error::NextVerError;
 use chrono::{Datelike, NaiveDate};
 use core::fmt::Display;
-use std::{fmt::Debug, sync::LazyLock};
+use std::{fmt::Debug, ops::Deref, sync::LazyLock};
 
 fn full_year(date: &NaiveDate) -> Result<u32, NextVerError> {
     // Note: Spec doesn't comment about years that are not 4-digit, so allow them
@@ -33,10 +33,6 @@ fn weeks_from_sunday(date: &impl Datelike) -> u32 {
     // This formula taken from a internal (`pub(crate)`) API inside chrono::NaiveDate. I'm unsure
     // why it's not true `pub`, or why it isn't implemented for all Datelikes. hopefully safe.
     (6 + date.ordinal() - days_from_sunday) / 7
-}
-
-fn two_digit_pad(num: &u32) -> String {
-    format!("{:02}", num)
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -83,7 +79,7 @@ impl Display for SemanticSpecifier {
 pub struct CalendarSpecifierData {
     pub(crate) format_pattern: &'static str,
     pub(crate) version_pattern: &'static str,
-    pub(crate) value_format_fn: fn(&u32) -> String,
+    pub(crate) zero_pad_len: Option<u8>,
     pub(crate) update_fn: fn(&NaiveDate) -> Result<u32, NextVerError>,
 }
 
@@ -97,44 +93,32 @@ pub enum CalendarSpecifier {
 
 impl Display for CalendarSpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.format_pattern())
+        write!(f, "{}", self.format_pattern)
+    }
+}
+
+impl Deref for CalendarSpecifier {
+    type Target = CalendarSpecifierData;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            CalendarSpecifier::Year(data)
+            | CalendarSpecifier::Month(data)
+            | CalendarSpecifier::Week(data)
+            | CalendarSpecifier::Day(data) => data,
+        }
     }
 }
 
 impl CalendarSpecifier {
     pub(crate) fn update(&self, date: &NaiveDate) -> Result<u32, NextVerError> {
-        match self {
-            CalendarSpecifier::Year(data)
-            | CalendarSpecifier::Month(data)
-            | CalendarSpecifier::Week(data)
-            | CalendarSpecifier::Day(data) => (data.update_fn)(date),
-        }
-    }
-
-    fn format_pattern(&self) -> &'static str {
-        match self {
-            CalendarSpecifier::Year(data)
-            | CalendarSpecifier::Month(data)
-            | CalendarSpecifier::Week(data)
-            | CalendarSpecifier::Day(data) => data.format_pattern,
-        }
-    }
-
-    fn version_pattern(&self) -> &'static str {
-        match self {
-            CalendarSpecifier::Year(data)
-            | CalendarSpecifier::Month(data)
-            | CalendarSpecifier::Week(data)
-            | CalendarSpecifier::Day(data) => data.version_pattern,
-        }
+        (self.update_fn)(date)
     }
 
     fn format_value(&self, value: &u32) -> String {
-        match self {
-            CalendarSpecifier::Year(data)
-            | CalendarSpecifier::Month(data)
-            | CalendarSpecifier::Week(data)
-            | CalendarSpecifier::Day(data) => (data.value_format_fn)(value),
+        match self.zero_pad_len {
+            Some(len) => format!("{:0len$}", value, len = len as usize),
+            None => u32::to_string(value),
         }
     }
 }
@@ -164,14 +148,14 @@ impl Specifier {
     pub fn format_pattern(&self) -> &'static str {
         match self {
             Specifier::Semantic(spec) => spec.format_pattern(),
-            Specifier::Calendar(spec) => spec.format_pattern(),
+            Specifier::Calendar(spec) => spec.format_pattern,
         }
     }
 
     pub fn version_pattern(&self) -> &'static str {
         match self {
             Specifier::Semantic(spec) => spec.version_pattern(),
-            Specifier::Calendar(spec) => spec.version_pattern(),
+            Specifier::Calendar(spec) => spec.version_pattern,
         }
     }
 
@@ -179,6 +163,29 @@ impl Specifier {
         match self {
             Specifier::Semantic(spec) => spec.format_value(value),
             Specifier::Calendar(spec) => spec.format_value(value),
+        }
+    }
+
+    fn parse_no_zero(&'static self, value: &str) -> Result<u32, NextVerError> {
+        if value.starts_with('0') {
+            Err(NextVerError::SpecifierMayNotBeZeroPadded {
+                specifier: self,
+                value_str: value.to_string(),
+            })
+        } else {
+            Ok(value.parse().unwrap())
+        }
+    }
+
+    pub fn parse_value_str(&'static self, value: &str) -> Result<u32, NextVerError> {
+        // unwrap is safe here because we'll know its definitely digit characters from
+        // previous regex matching
+        match self {
+            Specifier::Semantic(..) => self.parse_no_zero(value),
+            Specifier::Calendar(spec) => match spec.zero_pad_len {
+                Some(_) => Ok(value.parse().unwrap()),
+                None => self.parse_no_zero(value),
+            },
         }
     }
 }
@@ -190,63 +197,72 @@ pub static FULL_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YYYY]",
         version_pattern: r"\d+",
-        value_format_fn: u32::to_string,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: None,
         update_fn: full_year,
     }));
 pub static SHORT_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YY]",
         version_pattern: r"\d+",
-        value_format_fn: u32::to_string,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: None,
         update_fn: short_year,
     }));
 pub static ZERO_PADDED_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[0Y]",
         version_pattern: r"\d+",
-        value_format_fn: two_digit_pad,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: Some(2),
         update_fn: short_year,
     }));
 pub static SHORT_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[MM]",
         version_pattern: r"\d{1,2}",
-        value_format_fn: u32::to_string,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: None,
         update_fn: |date| Ok(date.month()),
     }));
 pub static ZERO_PADDED_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[0M]",
         version_pattern: r"\d{2}",
-        value_format_fn: two_digit_pad,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: Some(2),
         update_fn: |date| Ok(date.month()),
     }));
 pub static SHORT_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[WW]",
         version_pattern: r"\d{1,2}",
-        value_format_fn: u32::to_string,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: None,
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static ZERO_PADDED_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[0W]",
         version_pattern: r"\d{2}",
-        value_format_fn: two_digit_pad,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: Some(2),
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static SHORT_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[DD]",
         version_pattern: r"\d{1,2}",
-        value_format_fn: u32::to_string,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: None,
         update_fn: |date| Ok(date.day()),
     }));
 pub static ZERO_PADDED_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[0D]",
         version_pattern: r"\d{2}",
-        value_format_fn: two_digit_pad,
+        // value_format_fn: u32::to_string,
+        zero_pad_len: Some(2),
         update_fn: |date| Ok(date.day()),
     }));
 

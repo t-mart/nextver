@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use nextver::{Sem, Cal, CalSem, Scheme};
+use nextver::prelude::*;
 
 fn sem_ok_inputs() -> Vec<&'static str> {
     vec![
@@ -45,6 +45,23 @@ fn cal_sem_ok_inputs() -> Vec<&'static str> {
 fn parse_cal_sem_ok(inputs: &[&str]) {
     for input in inputs {
         let res = CalSem::new_format(input);
+        assert!(res.is_ok());
+    }
+}
+
+fn new_cal_sem_version_inputs() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("[YYYY].[MM].[MINOR].[PATCH]", "2020.01.01.01"),
+        ("[YYYY].[MM].[MINOR]", "2020.01.01"),
+        ("[YYYY].[MM].[DD].[MINOR]", "2020.01.01"),
+        ("[YYYY].[WW].[MINOR].[PATCH]", "2020.01.01"),
+        ("[YYYY].[WW].[MINOR]", "2020.01.01"),
+    ]
+}
+
+fn new_cal_sem_version(inputs: &[(&str, &str)]) {
+    for (format_str, version_str) in inputs {
+        let res = CalSem::new_version(format_str, version_str);
         assert!(res.is_ok());
     }
 }

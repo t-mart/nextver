@@ -133,6 +133,7 @@ mod format;
 mod scheme;
 mod specifier;
 mod version;
+mod specifier2;
 
 pub use crate::error::NextVerError;
 pub use crate::format::Format;
