@@ -2,137 +2,66 @@
 
 A library for parsing and incrementing arbitrarily-formatted versions.
 
-See the docs: <https://docs.rs/nextver>
+Instead of conforming to a specific versioning scheme, this library allows you to define your
+own version format, parse version strings against it, and increment versions according to
+semantic and/or calendar rules.
 
-## Quick start
+**See the docs here: <https://docs.rs/nextver>
 
-TODO: fix this to work
+## Examples
+
+Below, the text in `[brackets]` is a specifier. See what they mean [here](https://docs.rs/nextver#table).
 
 ```rust
-use nextver::{Version, NextVerError, SemanticLevel};
+// quickly get a next version
+use nextver::prelude::*;
 
-let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
-let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
-assert_eq!("1.3.0", incremented.to_string());
-assert!(version < incremented);
+let next = Sem::next(
+  "[MAJOR].[MINOR].[PATCH]",  // format string
+  "1.2.3",                    // current version string
+  &SemanticSpecifier::Minor   // the specifier to increment
+).unwrap();
+assert_eq!(next.to_string(), "1.3.0");
+ 
+let next = CalSem::next(
+  "[YYYY].[MM]-[PATCH]",       // format string
+  "2023.12-42",                // current version string
+  &Date::Explicit(2024, 1, 2), // the date to update to, or simply `Date::UtcNow`/`Date::LocalNow`
+  &CalSemSpecifier::Patch      // the specifier to increment, if no calendar update would occur
+).unwrap();
+assert_eq!(next.to_string(), "2024.01-0");
+```
 
-// you can use arbitrary literals
-let arbitrary = Version::from_parsed_format("v[MAJOR]-[PATCH]", "v1-2").unwrap();
-
-// you can use dates
-let dated = Version::from_parsed_format("[YYYY].[PATCH]", "2024.18").unwrap();
-
-// errors tell you what went wrong
-let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-assert!(matches!(invalid, Err(NextVerError::VersionFormatMismatch)));
+```rust
+// or, break down the steps for reusability
+use nextver::prelude::*;
+ 
+let format = CalSem::new_format("[YYYY].[MM].[PATCH]");
+let version = Version::parse("2023.12.42", &format).unwrap();
+let next = version.next(&Date::Explicit(2024, 1, 2), &CalSemSpecifier::Patch).unwrap();
+assert!(next > version);
 ```
 
 Jump to the specifiers table [here](struct.Format.html#specifier-table).
 
 ## CLI
 
-TODO: fill this in
+nextver also comes with a CLI tool, `nextver`, which can be used to quickly increment versions.
 
-## Deviations from CalVer
+Install it with cargo:
 
-This library is almost conformant to [CalVer](https://calver.org), with a few
-differences and clarifications, that you will hopefully find reasonable.
+```sh
+cargo install nextver
+```
 
-- Semantic and calendar specifiers must appear in strictly decreasing order of
-  their period going left-to-right, such as `[YYYY]` before `[MM]` and `[MAJOR]`
-  before `[MINOR]`. This also implies that multiple specifiers of the same
-  period are forbidden.
-  
-  This is for ordering, so that incremented versions always compare greater than
-  their originals.
+Then, run it:
 
-  - `[YYYY].[DD].[MM]` ❌ day before month
-  - `[MAJOR].[PATCH].[MINOR]` ❌ patch before minor
-  - `[YYYY].[MM].[0M]` ❌ two month specifiers
-  - `[MAJOR].[MINOR].[MINOR]` ❌ two minor specifiers
+```sh
+nextver next "1.2.3" --format "[MAJOR].[MINOR].[PATCH]" --specifier minor
+# 1.3.0
+```
 
-  This also has implications for week and month/day specifiers. Both week and
-  month are year-relative, and therefore have different periods. And
-  transitively, days are month-relative, so they are also forbidden from being
-  in formats with weeks.
-
-  - `[YYYY].[WW].[DD]` ❌ week and day
-  - `[YYYY].[MM].[WW]` ❌ month and week
-
-- There must be one and only one non-cyclic specifier in a format, and it must
-  be the first one. The non-cyclic specifiers are `[MAJOR]` and any derived from
-  the year (`[YYYY]`, `[YY]`, and `[0Y]`).
-  
-  This is also for ordering. Month/week/day and minor/patch values are cyclic,
-  and comparisons may be unexpected *unless* those values are grounded by a
-  first non-cyclic value.
-
-  - `[YYYY].[MAJOR]` ❌ two non-cyclic specifiers
-
-- For calendar specifiers, a succeeding specifier must relative to the previous
-  one. This only manifests in the `[DD]` specifier, which must be preceded by
-  `[MM]`.
-
-  This is because a day is month-relative, and would otherwise cycle multiple
-  times in a year.
-
-  - `[YYYY].[DD]` ❌ day without month
-
-- All calendar specifiers must precede semantic ones if both are present in a
-  format.
-
-  Calendar values move independently of semantic ones. Partitioning this way
-  maintains logical clarity.
-
-  - `[YYYY].[MINOR].[MM]` ❌ calendar, then semantic, then calendar
-  - `[MAJOR].[DD].[PATCH]` ❌ semantic, then calendar, then semantic
-
-- For the full year specifier (`[YYYY]`), years less than `1` (the [BCE
-  era](https://en.wikipedia.org/wiki/Common_Era)) are forbidden, making them
-  at least 1 digit, usually 4, possibly more, and definitely non-negative.
-  
-  If BCE years were allowed, the resulting value would be negative, and require
-  a sign character that would affect parsing.
-
-- For the short year (`[YY]`) and zero-padded year (`[0Y]`) specifiers, years
-  less than `2000` are forbidden.
-  
-  This is for the same reasons as the previous. While CalVer specifies that
-  years in this format are relative to the year `2000`, it does not clearly
-  forbid lesser years, but we do.
-
-And, these are not only suggestions — we enforce them in code by returning
-errors in such cases.
-
-Having said that, if any of these are disagreeable, open an issue to discuss. We
-just feel these are the kind of versions we would want to work with.
-
-TODO: incorporate this
-
-Another way of saying all this is that these are the only allowed formats:
-
-- Semantic
-  - `[MAJOR]`
-  - `[MAJOR]`, `[MINOR]`
-  - `[MAJOR]`, `[MINOR]`, `[PATCH]`
-- Calendar
-  - `[<year>]`
-  - `[<year>]`, `[<month>]`
-  - `[<year>]`, `[<month>]`, `[<day>]`
-  - `[<year>]`, `[<week>]`
-- Calendar + Semantic
-  - `[<year>]`, `[MINOR]`
-  - `[<year>]`, `[MINOR]`, `[PATCH]`
-  - `[<year>]`, `[PATCH]`
-  - `[<year>]`, `[<month>]`, `[MINOR]`
-  - `[<year>]`, `[<month>]`, `[MINOR]`, `[PATCH]`
-  - `[<year>]`, `[<month>]`, `[PATCH]`
-  - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`
-  - `[<year>]`, `[<month>]`, `[<day>]`, `[MINOR]`, `[PATCH]`
-  - `[<year>]`, `[<month>]`, `[<day>]`, `[PATCH]`
-  - `[<year>]`, `[<week>]`, `[MINOR]`
-  - `[<year>]`, `[<week>]`, `[MINOR]`, `[PATCH]`
-  - `[<year>]`, `[<week>]`, `[PATCH]`
+Then, run it with `nextver --help` to see the available options.
 
 ## Possible Improvements
 
