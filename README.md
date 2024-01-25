@@ -1,5 +1,8 @@
 # nextver
 
+*This library is currently under heavy development. Docs may not reflect the
+APIs or be incomplete. Test coverage is low in some areas.*
+
 A library for parsing and incrementing arbitrarily-formatted versions.
 
 Instead of conforming to a specific versioning scheme, this library allows you to define your
