@@ -6,11 +6,11 @@ Instead of conforming to a specific versioning scheme, this library allows you t
 own version format, parse version strings against it, and increment versions according to
 semantic and/or calendar rules.
 
-**See the docs here: <https://docs.rs/nextver>
+**See the docs here: <https://docs.rs/nextver>**
 
 ## Examples
 
-Below, the text in `[brackets]` is a specifier. See what they mean [here](https://docs.rs/nextver#table).
+Below, the text in `[brackets]` is a specifier. See what they mean [here](https://docs.rs/nextver/#table).
 
 ```rust
 // quickly get a next version
