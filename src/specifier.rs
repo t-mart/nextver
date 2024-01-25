@@ -61,7 +61,7 @@ impl SemanticSpecifier {
     }
 
     fn version_pattern(&self) -> &'static str {
-        r"\d+"
+        r"(\d+)"
     }
 
     fn format_value(&self, value: &u32) -> String {
@@ -129,12 +129,6 @@ pub enum Specifier {
     Calendar(CalendarSpecifier),
 }
 
-impl Specifier {
-    pub(crate) fn version_pattern_group(&self) -> String {
-        format!("({})", self.version_pattern())
-    }
-}
-
 impl Display for Specifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -196,72 +190,63 @@ pub static PATCH: Specifier = Specifier::Semantic(SemanticSpecifier::Patch);
 pub static FULL_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YYYY]",
-        version_pattern: r"\d+",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d+)",
         zero_pad_len: None,
         update_fn: full_year,
     }));
 pub static SHORT_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YY]",
-        version_pattern: r"\d+",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d+)",
         zero_pad_len: None,
         update_fn: short_year,
     }));
 pub static ZERO_PADDED_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[0Y]",
-        version_pattern: r"\d+",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d+)",
         zero_pad_len: Some(2),
         update_fn: short_year,
     }));
 pub static SHORT_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[MM]",
-        version_pattern: r"\d{1,2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{1,2})",
         zero_pad_len: None,
         update_fn: |date| Ok(date.month()),
     }));
 pub static ZERO_PADDED_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[0M]",
-        version_pattern: r"\d{2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{2})",
         zero_pad_len: Some(2),
         update_fn: |date| Ok(date.month()),
     }));
 pub static SHORT_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[WW]",
-        version_pattern: r"\d{1,2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{1,2})",
         zero_pad_len: None,
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static ZERO_PADDED_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[0W]",
-        version_pattern: r"\d{2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{2})",
         zero_pad_len: Some(2),
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static SHORT_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[DD]",
-        version_pattern: r"\d{1,2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{1,2})",
         zero_pad_len: None,
         update_fn: |date| Ok(date.day()),
     }));
 pub static ZERO_PADDED_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[0D]",
-        version_pattern: r"\d{2}",
-        // value_format_fn: u32::to_string,
+        version_pattern: r"(\d{2})",
         zero_pad_len: Some(2),
         update_fn: |date| Ok(date.day()),
     }));

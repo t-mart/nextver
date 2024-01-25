@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use nextver::prelude::*;
 
@@ -76,5 +78,10 @@ fn version_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, format_benchmark, version_benchmark);
+criterion_group!{
+    name = benches;
+    // give us more warmup time. my computer seems to do better with more warmup time
+    config = Criterion::default().warm_up_time(Duration::from_secs(7));
+    targets = format_benchmark, version_benchmark
+}
 criterion_main!(benches);

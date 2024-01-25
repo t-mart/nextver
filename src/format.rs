@@ -1,8 +1,9 @@
 use crate::scheme::Scheme;
 use crate::specifier::{Specifier, ALL};
-use crate::{Version, NextVerError};
+use crate::{NextVerError, Version};
 use core::fmt;
 use regex::Regex;
+use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::marker::PhantomData;
 
@@ -31,10 +32,10 @@ pub(crate) enum FormatToken {
 }
 
 impl FormatToken {
-    fn version_pattern_group(&self) -> String {
+    fn version_pattern_group(&self) -> Cow<'static, str> {
         match self {
-            FormatToken::Specifier(spec) => spec.version_pattern_group(),
-            FormatToken::Literal(text) => format!("({})", regex::escape(text)),
+            FormatToken::Specifier(spec) => Cow::Borrowed(spec.version_pattern()),
+            FormatToken::Literal(text) => Cow::Owned(format!("({})", regex::escape(text))),
         }
     }
 }
@@ -153,7 +154,13 @@ impl<S: Scheme> Format<S> {
             let tokens_subpattern = self
                 .tokens
                 .iter()
-                .map(|format_token| format_token.version_pattern_group())
+                .map(|format_token| {
+                    debug_assert!({
+                        let pattern = format_token.version_pattern_group();
+                        pattern.starts_with('(') && pattern.ends_with(')') && pattern.len() > 2
+                    });
+                    format_token.version_pattern_group()
+                })
                 .collect::<Vec<_>>()
                 .join("");
             let pattern = format!("^{tokens_subpattern}$");
@@ -180,6 +187,13 @@ impl<S: Scheme> Format<S> {
             let matched_spec = 'spec_find: {
                 for spec in ALL {
                     let format_pattern = spec.format_pattern();
+
+                    debug_assert!({
+                        format_pattern.starts_with('[')
+                            && format_pattern.ends_with(']')
+                            && format_pattern.len() > 2
+                    });
+
                     if format.starts_with(format_pattern) {
                         format = &format[format_pattern.len()..];
                         break 'spec_find Some(spec);
@@ -268,7 +282,7 @@ impl<S: Scheme> fmt::Display for Format<S> {
     ///
     /// ```
     /// use nextver::prelude::*;
-    /// 
+    ///
     /// let format_str = "[YYYY].[MM].[DD]";
     /// let format = Cal::new_format(format_str).unwrap();
     /// assert_eq!(format_str, format.to_string());
@@ -638,10 +652,7 @@ mod tests {
         let formats = ["[foo]", "[]", "[]]"];
         for format in formats {
             let actual = Sem::new_format(format);
-            assert!(matches!(
-                actual,
-                Err(NextVerError::UnknownSpecifier { .. })
-            ));
+            assert!(matches!(actual, Err(NextVerError::UnknownSpecifier { .. })));
         }
     }
 
