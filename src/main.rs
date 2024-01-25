@@ -249,8 +249,6 @@ impl From<ExitCode> for std::process::ExitCode {
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
 
-    println!("{:?}", &cli);
-
     match run(cli) {
         Ok((output, exit_code)) => {
             println!("{output}");

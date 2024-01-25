@@ -57,7 +57,7 @@ cargo install nextver
 Then, run it:
 
 ```sh
-nextver next "1.2.3" --format "[MAJOR].[MINOR].[PATCH]" --specifier minor
+nextver next "1.2.3" --format "[MAJOR].[MINOR].[PATCH]" --sem-level minor
 # 1.3.0
 ```
 
