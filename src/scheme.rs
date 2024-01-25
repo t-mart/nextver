@@ -23,9 +23,25 @@ pub(crate) mod priv_trait {
         /// Note: This must be called! Currently, at least one scheme requires the presence of certain
         /// specifiers at its end.
         fn parse_state_is_final(parse_state: &ParseState) -> bool;
+
+        /// The maximum number of specifiers that can be in a format_string. For a given scheme,
+        /// this should equal the largest number of specifiers that can be in a valid format.
+        ///
+        /// See [Scheme::token_capacity].
+        fn max_specifiers() -> usize;
+
+        /// The maximum number of tokens that can be in a [Format] or [Version]. To account for
+        /// literals being around the specifiers, this is equal to the maximum number of specifiers
+        /// times 2, plus 1. Think fenceposts.
+        ///
+        /// This is useful for pre-allocating a vector to hold the tokens.
+        ///
+        /// See [Scheme::max_specifiers].
+        fn max_tokens() -> usize {
+            Self::max_specifiers() * 2 + 1
+        }
     }
 }
-
 
 #[allow(private_bounds)]
 pub trait Scheme: priv_trait::Scheme {
@@ -40,7 +56,10 @@ pub trait Scheme: priv_trait::Scheme {
     ///
     /// This is a convenience method that creates a temporary [Format] object and parses the version
     /// string against it.
-    fn new_version(format_str: &str, version_str: &str) -> Result<Version<Self>, NextVerError> {
+    fn new_version<'fs>(
+        format_str: &str,
+        version_str: &'fs str,
+    ) -> Result<Version<'fs, Self>, NextVerError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         Ok(version)
@@ -172,6 +191,11 @@ impl priv_trait::Scheme for Sem {
     fn parse_state_is_final(_: &ParseState) -> bool {
         true
     }
+
+    fn max_specifiers() -> usize {
+        // longest exemplar is [MAJOR][MINOR][PATCH]
+        3
+    }
 }
 
 #[derive(Debug)]
@@ -285,6 +309,11 @@ impl priv_trait::Scheme for Cal {
 
     fn parse_state_is_final(_: &ParseState) -> bool {
         true
+    }
+
+    fn max_specifiers() -> usize {
+        // longest exemplar is [YYYY][MM][DD]
+        3
     }
 }
 
@@ -485,5 +514,10 @@ impl priv_trait::Scheme for CalSem {
     fn parse_state_is_final(parse_state: &ParseState) -> bool {
         use ParseState::*;
         matches!(parse_state, Major | Minor | Patch)
+    }
+
+    fn max_specifiers() -> usize {
+        // longest exemplar is [YYYY][MM][DD][MINOR][PATCH]
+        5
     }
 }

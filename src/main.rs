@@ -304,6 +304,8 @@ mod tests {
             "[YYYY].[MINOR]",
             "--date",
             "2024-12-01",
+            "--sem-level",
+            "minor",
         ])
         .unwrap();
 

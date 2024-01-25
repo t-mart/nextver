@@ -1,7 +1,7 @@
 use crate::scheme::Scheme;
 use crate::specifier::{Specifier, ALL};
 use crate::{NextVerError, Version};
-use core::fmt;
+use core::fmt::{self, Display};
 use regex::Regex;
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -26,12 +26,12 @@ impl ParseState {
 }
 
 #[derive(Debug)]
-pub(crate) enum FormatToken {
+pub(crate) enum FormatToken<'fs> {
     Specifier(&'static Specifier),
-    Literal(String),
+    Literal(&'fs str),
 }
 
-impl FormatToken {
+impl<'fs> FormatToken<'fs> {
     fn version_pattern_group(&self) -> Cow<'static, str> {
         match self {
             FormatToken::Specifier(spec) => Cow::Borrowed(spec.version_pattern()),
@@ -40,16 +40,16 @@ impl FormatToken {
     }
 }
 
-impl Clone for FormatToken {
+impl<'fs> Clone for FormatToken<'fs> {
     fn clone(&self) -> Self {
         match self {
             FormatToken::Specifier(spec) => FormatToken::Specifier(spec),
-            FormatToken::Literal(text) => FormatToken::Literal(text.clone()),
+            FormatToken::Literal(text) => FormatToken::Literal(text),
         }
     }
 }
 
-impl PartialEq for FormatToken {
+impl<'fs> PartialEq for FormatToken<'fs> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (FormatToken::Specifier(spec1), FormatToken::Specifier(spec2)) => {
@@ -57,6 +57,15 @@ impl PartialEq for FormatToken {
             }
             (FormatToken::Literal(text1), FormatToken::Literal(text2)) => text1 == text2,
             _ => false,
+        }
+    }
+}
+
+impl<'fs> Display for FormatToken<'fs> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FormatToken::Specifier(spec) => write!(f, "{}", spec),
+            FormatToken::Literal(text) => write!(f, "{}", text.replace('[', r"\[")),
         }
     }
 }
@@ -129,14 +138,14 @@ See the specifier table [here](crate#specifier-table) for a list of all specifie
 
 **/
 #[derive(Debug, Clone)]
-pub struct Format<S: Scheme> {
-    pub(crate) tokens: Vec<FormatToken>,
+pub struct Format<'fs, S: Scheme> {
+    pub(crate) tokens: Vec<FormatToken<'fs>>,
     regex: OnceCell<Regex>,
     scheme: PhantomData<S>,
 }
 
-impl<S: Scheme> Format<S> {
-    pub(crate) fn new(tokens: Vec<FormatToken>, regex: OnceCell<Regex>) -> Self {
+impl<'fs, S: Scheme> Format<'fs, S> {
+    pub(crate) fn new(tokens: Vec<FormatToken<'fs>>, regex: OnceCell<Regex>) -> Self {
         Self {
             tokens,
             regex,
@@ -144,7 +153,7 @@ impl<S: Scheme> Format<S> {
         }
     }
 
-    pub(crate) fn from_tokens(tokens: Vec<FormatToken>) -> Self {
+    pub(crate) fn from_tokens(tokens: Vec<FormatToken<'fs>>) -> Self {
         Self::new(tokens, OnceCell::new())
     }
 
@@ -177,10 +186,10 @@ impl<S: Scheme> Format<S> {
     /// - [`NextVerError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
     /// - [`NextVerError::UnterminatedSpecifier`] if a specifier is not terminated with a
     ///   closing square bracket (`]`).
-    pub(crate) fn parse(format_str: &str) -> Result<Self, NextVerError> {
+    pub(crate) fn parse(format_str: &'fs str) -> Result<Self, NextVerError> {
         let mut format = format_str;
         let mut parse_state = ParseState::new();
-        let mut tokens = vec![];
+        let mut tokens = Vec::with_capacity(S::max_tokens());
         let mut last_spec = None;
 
         while !format.is_empty() {
@@ -195,25 +204,25 @@ impl<S: Scheme> Format<S> {
                     });
 
                     if format.starts_with(format_pattern) {
-                        format = &format[format_pattern.len()..];
                         break 'spec_find Some(spec);
                     }
                 }
                 None
             };
 
-            if let Some(spec) = matched_spec {
+            let consume_len = if let Some(spec) = matched_spec {
                 // check that specifiers are in order]
                 S::advance_parse_state(&mut parse_state, spec)?;
                 tokens.push(FormatToken::Specifier(spec));
                 last_spec = Some(spec);
+                spec.format_pattern().len()
             } else {
                 // check if its escaped brackets, an unknown/unterminated specifier, or finally,
                 // just a literal.
                 let (literal, consume_len) = if format.starts_with('[') {
-                    // check if its an unknown/unterminated specifier. we technically don't need to
+                    // determine if unknown or unterminated specifier. we technically don't need to
                     // error here: could just parse this as a literal because, above, we've already
-                    // exhausted all known specifiers, but it's probably not what the user intended.
+                    // exhausted all known specifiers, but this helps the user.
                     let mut next_chars = format.chars().skip(1);
                     let closing_index = next_chars
                         .position(|c| c == ']')
@@ -233,23 +242,35 @@ impl<S: Scheme> Format<S> {
                     });
                 } else if format.starts_with(r"\[") {
                     // escaped opening bracket
-                    ('[', 2)
+                    (&format[1..2], 2)
                 } else {
-                    // any other literal
-                    let next_char = format.chars().next().unwrap();
-                    (next_char, 1)
+                    // any other literal.
+                    //
+                    // gotta use chars() to find byte length to consume (for non-ascii, it's more
+                    // than 1 byte)
+                    let len_next = format.chars().next().unwrap().len_utf8();
+                    (&format[0..len_next], len_next)
                 };
-                format = &format[consume_len..];
 
                 // we can add this literal to the last token if it was also a literal.
                 // this will help us cut down on the total number of tokens and therefore, regex
                 // groups later.
                 if let Some(FormatToken::Literal(last_literal)) = tokens.last_mut() {
-                    last_literal.push(literal);
+                    // fast str "concat": we just increase the length of the last literal by the
+                    // size of the new literal. this works because they are contiguous in memory.
+                    let ptr = last_literal.as_ptr();
+                    let new_len = last_literal.len() + literal.len();
+                    *last_literal = unsafe {
+                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, new_len))
+                    };
                 } else {
-                    tokens.push(FormatToken::Literal(literal.to_string()));
+                    tokens.push(FormatToken::Literal(literal));
                 }
-            }
+
+                consume_len
+            };
+
+            format = &format[consume_len..];
         }
 
         if let Some(last_spec) = last_spec {
@@ -263,19 +284,19 @@ impl<S: Scheme> Format<S> {
         Ok(Self::from_tokens(tokens))
     }
 
-    pub fn parse_version(&self, version_str: &str) -> Result<Version<S>, NextVerError> {
+    pub fn parse_version<'vs>(&self, version_str: &'vs str) -> Result<Version<'vs, S>, NextVerError> {
         Version::parse(version_str, self)
     }
 }
 
-impl<S: Scheme> PartialEq for Format<S> {
+impl<'fs, S: Scheme> PartialEq for Format<'fs, S> {
     /// Returns true if the two formats would have the same string representation.
     fn eq(&self, other: &Self) -> bool {
         self.tokens == other.tokens
     }
 }
 
-impl<S: Scheme> fmt::Display for Format<S> {
+impl<'fs, S: Scheme> Display for Format<'fs, S> {
     /// Display a format as a format string.
     ///
     /// # Example
@@ -288,17 +309,10 @@ impl<S: Scheme> fmt::Display for Format<S> {
     /// assert_eq!(format_str, format.to_string());
     /// ```
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let format_string = self
-            .tokens
-            .iter()
-            .map(|token| match token {
-                FormatToken::Specifier(specifier) => specifier.format_pattern(),
-                FormatToken::Literal(text) => text,
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        write!(f, "{}", format_string)
+        for token in &self.tokens {
+            write!(f, "{}", token)?;
+        }
+        Ok(())
     }
 }
 
@@ -397,17 +411,17 @@ mod tests {
     #[test]
     fn test_literal() {
         let literal_front = "the quick brown fox jumps over the lazy dog";
-        let literal_middle = "more text";
+        let literal_middle = "😉";
         let literal_back = "the end";
         let format_string = format!("{literal_front}[MAJOR]{literal_middle}[MINOR]{literal_back}");
         let format = Sem::new_format(&format_string);
         assert_eq!(
             Ok(vec![
-                FormatToken::Literal(literal_front.to_string()),
+                FormatToken::Literal(literal_front),
                 FormatToken::Specifier(&MAJOR),
-                FormatToken::Literal(literal_middle.to_string()),
+                FormatToken::Literal(literal_middle),
                 FormatToken::Specifier(&MINOR),
-                FormatToken::Literal(literal_back.to_string()),
+                FormatToken::Literal(literal_back),
             ]),
             format.map(|f| f.tokens)
         );
@@ -641,10 +655,13 @@ mod tests {
         assert_eq!(
             Ok(vec![
                 FormatToken::Specifier(&FULL_YEAR),
-                FormatToken::Literal("[YYYY]".to_string()),
-            ]),
-            actual.map(|f| f.tokens)
+                FormatToken::Literal("[YYYY]"),
+            ])
+            .as_ref(),
+            actual.as_ref().map(|f| &f.tokens)
         );
+        let round_tripped_format = actual.unwrap().to_string();
+        assert_eq!(format, round_tripped_format);
     }
 
     #[test]

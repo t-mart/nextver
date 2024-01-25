@@ -1,9 +1,12 @@
 use crate::scheme::{Cal, CalSem, Scheme, Sem};
 use crate::{format::FormatToken, specifier::*, Format, NextVerError};
 use chrono::{Datelike, Local, NaiveDate, Utc};
-use core::{fmt, panic};
+use core::{
+    fmt::{self, Display},
+    panic,
+};
 use std::cmp::Ordering;
-use std::{borrow::Cow, marker::PhantomData};
+use std::marker::PhantomData;
 
 /**
 Ways to specify a date.
@@ -60,15 +63,27 @@ impl<T: Datelike> From<T> for Date {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum VersionToken {
+pub(crate) enum VersionToken<'vs> {
     Value {
         value: u32,
         spec: &'static Specifier,
     },
-    Fixed(String),
+    Fixed(&'vs str),
 }
 
-impl PartialEq for VersionToken {
+impl<'vs> Display for VersionToken<'vs> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VersionToken::Value { value, spec } => {
+                let rendered = spec.format_value(value);
+                write!(f, "{}", rendered)
+            }
+            VersionToken::Fixed(text) => write!(f, "{}", text),
+        }
+    }
+}
+
+impl<'vs> PartialEq for VersionToken<'vs> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
@@ -90,7 +105,7 @@ impl PartialEq for VersionToken {
     }
 }
 
-impl PartialOrd for VersionToken {
+impl<'vs> PartialOrd for VersionToken<'vs> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
             (
@@ -117,14 +132,15 @@ impl PartialOrd for VersionToken {
     }
 }
 
-impl From<&VersionToken> for FormatToken {
-    fn from(val: &VersionToken) -> Self {
-        match val {
-            VersionToken::Value { spec, .. } => FormatToken::Specifier(spec),
-            VersionToken::Fixed(text) => FormatToken::Literal(text.clone()),
-        }
-    }
-}
+// TODO: Readd this?
+// impl <'fs> From<&VersionToken> for FormatToken<'fs> {
+//     fn from(val: &VersionToken) -> Self {
+//         match val {
+//             VersionToken::Value { spec, .. } => FormatToken::Specifier(spec),
+//             VersionToken::Fixed(text) => FormatToken::Literal(text),
+//         }
+//     }
+// }
 
 /// A Version object represents the parsing of a version string against a [Format], where specifier
 /// text is converted into numeric values. Versions can be displayed, incremented, and compared.
@@ -184,13 +200,13 @@ impl From<&VersionToken> for FormatToken {
 /// assert!(version < incremented);
 /// ```
 #[derive(Debug, PartialEq, PartialOrd)]
-pub struct Version<S: Scheme> {
-    pub(crate) tokens: Vec<VersionToken>,
+pub struct Version<'vs, S: Scheme> {
+    pub(crate) tokens: Vec<VersionToken<'vs>>,
     scheme: PhantomData<S>,
 }
 
-impl<S: Scheme> Version<S> {
-    pub(crate) fn new(tokens: Vec<VersionToken>) -> Self {
+impl<'vs, S: Scheme> Version<'vs, S> {
+    pub(crate) fn new(tokens: Vec<VersionToken<'vs>>) -> Self {
         Self {
             tokens,
             scheme: PhantomData,
@@ -212,7 +228,7 @@ impl<S: Scheme> Version<S> {
     ///
     /// - If the version string does not match the format string, returns a
     ///   [NextVerError::VersionFormatMismatch].
-    pub(crate) fn parse(version_str: &str, format: &Format<S>) -> Result<Self, NextVerError> {
+    pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, NextVerError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
             return Err(NextVerError::VersionFormatMismatch {
                 version_string: version_str.to_owned(),
@@ -233,18 +249,18 @@ impl<S: Scheme> Version<S> {
                 continue;
             };
 
-            let text = match_.as_str().to_owned();
+            let text = match_.as_str();
 
             let token = match format_token {
                 FormatToken::Specifier(specifier) => {
-                    let value = specifier.parse_value_str(&text)?;
+                    let value = specifier.parse_value_str(text)?;
                     VersionToken::Value {
                         value,
                         spec: specifier,
                     }
                 }
                 FormatToken::Literal(format_text) => {
-                    if !text.eq(format_text) {
+                    if !text.eq(*format_text) {
                         return Err(NextVerError::VersionFormatMismatch {
                             version_string: version_str.to_owned(),
                             format_string: format.to_string(),
@@ -294,7 +310,7 @@ impl<S: Scheme> Version<S> {
     // }
 }
 
-impl Version<Sem> {
+impl<'vs> Version<'vs, Sem> {
     /// Returns a new version where the semantic value of the given [SemanticLevel] is incremented,
     /// and all lesser semantic values are reset to zero.
     ///
@@ -365,7 +381,7 @@ impl Version<Sem> {
     }
 }
 
-impl Version<Cal> {
+impl<'vs> Version<'vs, Cal> {
     /// Returns a new [Version] where all calendar values in this version are updated to match the
     /// given [Date].
     ///
@@ -450,7 +466,7 @@ impl CalSemSpecifier {
     }
 }
 
-impl Version<CalSem> {
+impl<'vs> Version<'vs, CalSem> {
     /// Returns a new [Version] where all calendar values in this version are updated to match the
     /// given [Date]. If the calendar values would not change, the version is incremented by the
     /// given [CalSemSemanticSpecifier].
@@ -516,15 +532,11 @@ impl Version<CalSem> {
     }
 }
 
-impl<S: Scheme> fmt::Display for Version<S> {
+impl<'vs, S: Scheme> Display for Version<'vs, S> {
     /// Returns the rendered version string
-    fn fmt<'a>(&'a self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for token in &self.tokens {
-            let rendered: Cow<'a, String> = match token {
-                VersionToken::Value { value, spec } => Cow::Owned(spec.format_value(value)),
-                VersionToken::Fixed(text) => Cow::Borrowed(text),
-            };
-            write!(f, "{}", rendered)?
+            write!(f, "{}", token)?
         }
 
         Ok(())
@@ -532,11 +544,11 @@ impl<S: Scheme> fmt::Display for Version<S> {
 }
 
 /// Returns a new [Format] object equal to the one used to parse this version.
-impl<S: Scheme> From<&Version<S>> for Format<S> {
-    fn from(version: &Version<S>) -> Self {
-        Format::from_tokens(version.tokens.iter().map(|token| token.into()).collect())
-    }
-}
+// impl<'fs, S: Scheme> From<&Version<S>> for Format<'fs, S> {
+//     fn from(version: &Version<S>) -> Self {
+//         Format::from_tokens(version.tokens.iter().map(|token| token.into()).collect())
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -566,7 +578,7 @@ mod tests {
             ("[YYYY].[MM].[DD]", "1000.02.3"),
             ("[YYYY].[MM].[DD]", "1000.2.03"),
             ("[YYYY].[WW]", "1001.02"),
-            ("[YY]", "01")
+            ("[YY]", "01"),
         ];
 
         for (format_str, version_str) in &args {
