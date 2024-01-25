@@ -61,7 +61,7 @@ impl SemanticSpecifier {
     }
 
     fn version_pattern(&self) -> &'static str {
-        r"(\d+)"
+        r"([1-9][0-9]*)"
     }
 
     fn format_value(&self, value: &u32) -> String {
@@ -160,27 +160,11 @@ impl Specifier {
         }
     }
 
-    fn parse_no_zero(&'static self, value: &str) -> Result<u32, NextVerError> {
-        if value.starts_with('0') {
-            Err(NextVerError::SpecifierMayNotBeZeroPadded {
-                specifier: self,
-                value_str: value.to_string(),
-            })
-        } else {
-            Ok(value.parse().unwrap())
-        }
-    }
-
-    pub fn parse_value_str(&'static self, value: &str) -> Result<u32, NextVerError> {
-        // unwrap is safe here because we'll know its definitely digit characters from
-        // previous regex matching
-        match self {
-            Specifier::Semantic(..) => self.parse_no_zero(value),
-            Specifier::Calendar(spec) => match spec.zero_pad_len {
-                Some(_) => Ok(value.parse().unwrap()),
-                None => self.parse_no_zero(value),
-            },
-        }
+    pub fn parse_value_str(&'static self, value: &str) -> u32 {
+        // we used to have some logic in here (about rejecting zero-padded values when the specifier
+        // didn't allow them) but it was solved by regex. nevertheless, we keep this function around
+        // in case we need to add more logic in the future.
+        value.parse().unwrap()
     }
 }
 
@@ -190,63 +174,63 @@ pub static PATCH: Specifier = Specifier::Semantic(SemanticSpecifier::Patch);
 pub static FULL_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YYYY]",
-        version_pattern: r"(\d+)",
+        version_pattern: r"([1-9][0-9]*)", // there is no year 0, so this will always work
         zero_pad_len: None,
         update_fn: full_year,
     }));
 pub static SHORT_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[YY]",
-        version_pattern: r"(\d+)",
+        version_pattern: r"((?:0)|(?:[1-9][0-9]*))", // match year 0 (2000), but otherwise, must start [1-9]
         zero_pad_len: None,
         update_fn: short_year,
     }));
 pub static ZERO_PADDED_YEAR: Specifier =
     Specifier::Calendar(CalendarSpecifier::Year(CalendarSpecifierData {
         format_pattern: "[0Y]",
-        version_pattern: r"(\d+)",
+        version_pattern: r"([0-9]{2,})", // 00 is fine
         zero_pad_len: Some(2),
         update_fn: short_year,
     }));
 pub static SHORT_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[MM]",
-        version_pattern: r"(\d{1,2})",
+        version_pattern: r"([1-9][0-9]?)",
         zero_pad_len: None,
         update_fn: |date| Ok(date.month()),
     }));
 pub static ZERO_PADDED_MONTH: Specifier =
     Specifier::Calendar(CalendarSpecifier::Month(CalendarSpecifierData {
         format_pattern: "[0M]",
-        version_pattern: r"(\d{2})",
+        version_pattern: r"((?:0[1-9])|(?:[1-9][0-9]))", // don't match 00
         zero_pad_len: Some(2),
         update_fn: |date| Ok(date.month()),
     }));
 pub static SHORT_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[WW]",
-        version_pattern: r"(\d{1,2})",
+        version_pattern: r"((?:[0-9])|(?:[1-9][0-9]))",
         zero_pad_len: None,
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static ZERO_PADDED_WEEK: Specifier =
     Specifier::Calendar(CalendarSpecifier::Week(CalendarSpecifierData {
         format_pattern: "[0W]",
-        version_pattern: r"(\d{2})",
+        version_pattern: r"([0-9]{2})", // don't match 00
         zero_pad_len: Some(2),
         update_fn: |date| Ok(weeks_from_sunday(date)),
     }));
 pub static SHORT_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[DD]",
-        version_pattern: r"(\d{1,2})",
+        version_pattern: r"([1-9][0-9]?)",
         zero_pad_len: None,
         update_fn: |date| Ok(date.day()),
     }));
 pub static ZERO_PADDED_DAY: Specifier =
     Specifier::Calendar(CalendarSpecifier::Day(CalendarSpecifierData {
         format_pattern: "[0D]",
-        version_pattern: r"(\d{2})",
+        version_pattern: r"((?:0[1-9])|(?:[1-9][0-9]))", // don't match 00
         zero_pad_len: Some(2),
         update_fn: |date| Ok(date.day()),
     }));

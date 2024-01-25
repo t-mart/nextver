@@ -1,6 +1,6 @@
 use crate::scheme::{Cal, CalSem, Scheme, Sem};
 use crate::{format::FormatToken, specifier::*, Format, NextVerError};
-use chrono::{Datelike, Local, NaiveDate, Utc};
+use chrono::{Local, NaiveDate, Utc};
 use core::{
     fmt::{self, Display},
     panic,
@@ -14,7 +14,7 @@ Ways to specify a date.
 ```
 use nextver::Date;
 
-let explicit = Date::Explicit { year: 2021, month: 2, day: 3 };
+let explicit = Date::Explicit(2021, 2, 3);
 let utc_now = Date::UtcNow;
 let local_now = Date::LocalNow;
 ```
@@ -48,17 +48,6 @@ impl Date {
                 },
             ),
         }
-    }
-}
-
-impl<T: Datelike> From<T> for Date {
-    // it's a little inefficient to have a Datelike object already, have to desconstruct its fields
-    // here, and then reconstruct them in get_date. but i don't want to expose the chrono to
-    // the user. we'd also have to jump through some hoops to own the Datelike, which is a trait,
-    // not a concrete type. therefore, i think this might be best: just allow conversion.
-    /// Creates a [Date::Explicit] from a [chrono::Datelike] object.
-    fn from(datelike: T) -> Self {
-        Date::Explicit(datelike.year(), datelike.month(), datelike.day())
     }
 }
 
@@ -131,16 +120,6 @@ impl<'vs> PartialOrd for VersionToken<'vs> {
         }
     }
 }
-
-// TODO: Readd this?
-// impl <'fs> From<&VersionToken> for FormatToken<'fs> {
-//     fn from(val: &VersionToken) -> Self {
-//         match val {
-//             VersionToken::Value { spec, .. } => FormatToken::Specifier(spec),
-//             VersionToken::Fixed(text) => FormatToken::Literal(text),
-//         }
-//     }
-// }
 
 /// A Version object represents the parsing of a version string against a [Format], where specifier
 /// text is converted into numeric values. Versions can be displayed, incremented, and compared.
@@ -236,7 +215,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
             });
         };
 
-        let mut tokens = Vec::new();
+        let mut tokens = Vec::with_capacity(format.tokens.len());
 
         // skip the first capture because it's the implicit group of the whole regex
         let group_captures = captures.iter().skip(1);
@@ -253,7 +232,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
 
             let token = match format_token {
                 FormatToken::Specifier(specifier) => {
-                    let value = specifier.parse_value_str(text)?;
+                    let value = specifier.parse_value_str(text);
                     VersionToken::Value {
                         value,
                         spec: specifier,
@@ -301,13 +280,6 @@ impl<'vs, S: Scheme> Version<'vs, S> {
 
         Ok(Version::new(new_tokens))
     }
-
-    // /// Compare this version to another version string. This is a convenience method that parses
-    // /// the other version string against the format of this version.
-    // pub fn partial_cmp_with_string(&self, other_version_str: &str) -> Option<Ordering> {
-    //     let other = Self::parse(other_version_str, self.into()).ok()?;
-    //     self.partial_cmp(&other)
-    // }
 }
 
 impl<'vs> Version<'vs, Sem> {
@@ -543,51 +515,237 @@ impl<'vs, S: Scheme> Display for Version<'vs, S> {
     }
 }
 
-/// Returns a new [Format] object equal to the one used to parse this version.
-// impl<'fs, S: Scheme> From<&Version<S>> for Format<'fs, S> {
-//     fn from(version: &Version<S>) -> Self {
-//         Format::from_tokens(version.tokens.iter().map(|token| token.into()).collect())
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
+    // use chrono::format;
+
     use super::*;
 
     #[test]
-    fn test_sem_not_zero_padded() {
-        let version_strs = ["01.2.3", "1.02.3", "1.2.03"];
+    fn test_major_minor_patch_parse() {
+        let version_strs = [
+            ("01.2.3", false), // zero-padding disallowed
+            ("1.02.3", false), // zero-padding disallowed
+            ("1.2.03", false), // zero-padding disallowed
+            ("1.2.3", true),
+            ("10.20.30", true),
+            ("11.22.33", true),
+        ];
 
-        for version_str in &version_strs {
+        for (version_str, passes) in &version_strs {
             let format = Sem::new_format("[MAJOR].[MINOR].[PATCH]").unwrap();
             let version = Version::parse(version_str, &format);
-            assert!(matches!(
-                version,
-                Err(NextVerError::SpecifierMayNotBeZeroPadded { .. })
-            ));
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
         }
     }
 
-    /// cal specifiers that aren't zero-padded shouldn't be allowed to be parsed as such.
-    ///
-    /// this is also sufficient to cover calsem.
+    /// test full year
     #[test]
-    fn test_cal_not_zero_padded() {
+    fn test_full_year_parse() {
+        let format_str = "[YYYY]";
         let args = [
-            ("[YYYY].[MM].[DD]", "0100.2.3"),
-            ("[YYYY].[MM].[DD]", "1000.02.3"),
-            ("[YYYY].[MM].[DD]", "1000.2.03"),
-            ("[YYYY].[WW]", "1001.02"),
-            ("[YY]", "01"),
+            ("01", false),  // zero-padding disallowed
+            ("001", false), // zero-padding disallowed
+            ("0", false),   // no year 0 (that'd be 1 BCE)
+            ("1", true),
+            ("10", true),
+            ("100", true),
         ];
 
-        for (format_str, version_str) in &args {
+        for (version_str, passes) in &args {
             let format = Cal::new_format(format_str).unwrap();
             let version = Version::parse(version_str, &format);
-            assert!(matches!(
-                version,
-                Err(NextVerError::SpecifierMayNotBeZeroPadded { .. })
-            ));
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    /// test short year
+    #[test]
+    fn test_short_year_parse() {
+        let format_str = "[YY]";
+        let args = [
+            ("01", false),  // zero-padding disallowed
+            ("001", false), // zero-padding disallowed
+            ("0", true),
+            ("1", true),
+            ("10", true),
+            ("100", true),
+        ];
+
+        for (version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    /// test zero-padded year
+    #[test]
+    fn test_zp_year_parse() {
+        let format_str = "[0Y]";
+        let args = [
+            ("0", false), // must be 2-digits
+            ("1", false), // must be 2-digits
+            ("00", true),
+            ("01", true),
+            ("10", true),
+            ("100", true),
+        ];
+
+        for (version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    // test zero-padded week
+    #[test]
+    fn test_zp_week_parse() {
+        let args = [
+            ("[YYYY].[0W]", "2024.0", false),   // must be two-digit
+            ("[YYYY].[0W]", "2024.122", false), // must be two-digit
+            ("[YYYY].[0W]", "2024.00", true),   // there is a week zero
+            ("[YYYY].[0W]", "2024.01", true),
+            ("[YYYY].[0W]", "2024.10", true),
+            ("[YYYY].[0W]", "2024.12", true),
+        ];
+
+        for (format_str, version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    // test short week
+    #[test]
+    fn test_short_week_parse() {
+        let args = [
+            ("[YYYY].[WW]", "2024.01", false),  // zero-padding disallowed
+            ("[YYYY].[WW]", "2024.00", false),  // zero-padding disallowed
+            ("[YYYY].[WW]", "2024.122", false), // must be two-digit
+            ("[YYYY].[WW]", "2024.0", true),
+            ("[YYYY].[WW]", "2024.10", true),
+            ("[YYYY].[WW]", "2024.12", true),
+        ];
+
+        for (format_str, version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    /// test zero-padded month and day (same characteristics: no month/day 0, 2 digits).
+    #[test]
+    fn test_zp_month_day_parse() {
+        let args = [
+            // month
+            ("[YYYY].[0M]", "2024.0", false),   // must be two-digit
+            ("[YYYY].[0M]", "2024.00", false),  // no month 0
+            ("[YYYY].[0M]", "2024.122", false), // must be two-digit
+            ("[YYYY].[0M]", "2024.01", true),
+            ("[YYYY].[0M]", "2024.10", true),
+            ("[YYYY].[0M]", "2024.12", true),
+            // day
+            ("[YYYY].[MM].[0D]", "2024.1.0", false), // must be two-digit
+            ("[YYYY].[MM].[0D]", "2024.1.00", false), // no day 0
+            ("[YYYY].[MM].[0D]", "2024.1.122", false), // must be two-digit
+            ("[YYYY].[MM].[0D]", "2024.1.01", true),
+            ("[YYYY].[MM].[0D]", "2024.1.10", true),
+            ("[YYYY].[MM].[0D]", "2024.1.12", true),
+        ];
+
+        for (format_str, version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    /// test short month, day, and week. (same characteristics: no month/day 0, 1-2 digits).
+    #[test]
+    fn test_short_mdw_parse() {
+        let args = [
+            // month
+            ("[YYYY].[MM]", "2024.0", false),   // no month 0
+            ("[YYYY].[MM]", "2024.00", false),  // zero-padding disallowed
+            ("[YYYY].[MM]", "2024.01", false),  // zero-padding disallowed
+            ("[YYYY].[MM]", "2024.122", false), // must be two-digit
+            ("[YYYY].[MM]", "2024.1", true),
+            ("[YYYY].[MM]", "2024.10", true),
+            ("[YYYY].[MM]", "2024.12", true),
+            // day
+            ("[YYYY].[MM].[DD]", "2024.1.0", false), // no month 0
+            ("[YYYY].[MM].[DD]", "2024.1.00", false), // zero-padding disallowed
+            ("[YYYY].[MM].[DD]", "2024.1.01", false), // zero-padding disallowed
+            ("[YYYY].[MM].[DD]", "2024.1.122", false), // must be two-digit
+            ("[YYYY].[MM].[DD]", "2024.1.1", true),
+            ("[YYYY].[MM].[DD]", "2024.1.10", true),
+            ("[YYYY].[MM].[DD]", "2024.1.12", true),
+        ];
+
+        for (format_str, version_str, passes) in &args {
+            let format = Cal::new_format(format_str).unwrap();
+            let version = Version::parse(version_str, &format);
+            if *passes {
+                assert!(version.is_ok());
+            } else {
+                assert!(matches!(
+                    version,
+                    Err(NextVerError::VersionFormatMismatch { .. })
+                ));
+            }
         }
     }
 

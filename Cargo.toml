@@ -16,7 +16,12 @@ edition = "2021"
 chrono = "0.4.31"
 clap = { version = "4.4.17", features = ["derive"] }
 thiserror = "1.0.56"
-regex = "1.10.2"
+# regex = "1.10.2"
+
+[dependencies.regex]
+version = "1.10.2"
+default-features = false
+features = ["perf", "std"]
 
 [dev-dependencies]
 criterion = "0.5.1"

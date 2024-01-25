@@ -56,10 +56,10 @@ pub trait Scheme: priv_trait::Scheme {
     ///
     /// This is a convenience method that creates a temporary [Format] object and parses the version
     /// string against it.
-    fn new_version<'fs>(
+    fn new_version<'vs>(
         format_str: &str,
-        version_str: &'fs str,
-    ) -> Result<Version<'fs, Self>, NextVerError> {
+        version_str: &'vs str,
+    ) -> Result<Version<'vs, Self>, NextVerError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         Ok(version)

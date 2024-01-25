@@ -24,9 +24,6 @@ pub enum NextVerError {
         format_string: String,
     },
 
-    #[error("String value `{value_str}` cannot be zero-padded for specifier `{specifier}`")]
-    SpecifierMayNotBeZeroPadded { specifier: &'static Specifier, value_str: String },
-
     #[error("unknown specifier pattern `{pattern}` in format")]
     UnknownSpecifier { pattern: String },
 

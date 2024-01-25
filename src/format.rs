@@ -247,9 +247,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     // any other literal.
                     //
                     // gotta use chars() to find byte length to consume (for non-ascii, it's more
-                    // than 1 byte)
-                    let len_next = format.chars().next().unwrap().len_utf8();
-                    (&format[0..len_next], len_next)
+                    // than 1 byte). otherwise, rust complains we're splitting at a non-char
+                    // boundary index
+                    let len_next_char = format.chars().next().unwrap().len_utf8();
+                    (&format[0..len_next_char], len_next_char)
                 };
 
                 // we can add this literal to the last token if it was also a literal.
@@ -257,7 +258,9 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                 // groups later.
                 if let Some(FormatToken::Literal(last_literal)) = tokens.last_mut() {
                     // fast str "concat": we just increase the length of the last literal by the
-                    // size of the new literal. this works because they are contiguous in memory.
+                    // size of the new literal. this works because the addition is in contiguous
+                    // memory and we know that the length of the underlying string is at least this
+                    // long.
                     let ptr = last_literal.as_ptr();
                     let new_len = last_literal.len() + literal.len();
                     *last_literal = unsafe {
@@ -284,7 +287,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
         Ok(Self::from_tokens(tokens))
     }
 
-    pub fn parse_version<'vs>(&self, version_str: &'vs str) -> Result<Version<'vs, S>, NextVerError> {
+    pub fn parse_version<'vs>(
+        &self,
+        version_str: &'vs str,
+    ) -> Result<Version<'vs, S>, NextVerError> {
         Version::parse(version_str, self)
     }
 }
