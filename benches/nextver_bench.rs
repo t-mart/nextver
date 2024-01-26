@@ -85,3 +85,5 @@ criterion_group!{
     targets = format_benchmark, version_benchmark
 }
 criterion_main!(benches);
+
+// TODO: look at how chrono does their criterion benchmarking. our structure could be improved.

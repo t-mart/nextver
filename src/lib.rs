@@ -125,8 +125,6 @@
 //! let format = Sem::new_format(r"[MAJOR]-\[literal-text]");
 //! ```
 #![feature(lazy_cell)]
-// TODO: try to make us no-copy everywhere. this means that version and format lifetimes are based
-// on the strings they are created from.
 
 mod error;
 mod format;
@@ -166,3 +164,7 @@ pub mod prelude {
 }
 
 // TODO: we might be able do make this whole library non-allocating.
+
+// TODO: take a look at how chrono does string -> time and time -> string with strftime and strptime
+// we're kinda doing the same thing, and that API is prolly good, and its implementation. also take
+// note of how it names things and its architecture. they don't even use regex over there. see how
