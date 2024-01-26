@@ -76,7 +76,8 @@ pub trait Scheme: priv_trait::Scheme {
     }
 }
 
-#[derive(Debug)]
+/// Scheme for formats that have only semantic specifiers, such as `[MAJOR].[MINOR].[PATCH]`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Sem;
 
 impl Sem {
@@ -198,7 +199,13 @@ impl priv_trait::Scheme for Sem {
     }
 }
 
-#[derive(Debug)]
+
+/// Scheme for formats that have only calendar specifiers, such as `[YYYY].[MM].[DD]`.
+/// 
+/// This scheme is less useful than [CalSem] because there is no way to increment it twice in the
+/// same period of its least significant specifier. For example, a version with format
+/// `[YYYY].[MM].[DD]` can only be incremented/updated once per day.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Cal;
 
 impl Cal {
@@ -317,11 +324,13 @@ impl priv_trait::Scheme for Cal {
     }
 }
 
-/// This method is designed for formats that have both calendar and semantic specifiers, such as
-/// `[YYYY].[MM].[DD].[PATCH]`. You would have such a format if you want to be able to increase
+/// Scheme for formats that have both calendar and semantic specifiers, such as
+/// `[YYYY].[MM].[DD].[PATCH]`.
+/// 
+/// You would have such a format if you want to be able to increase
 /// your version multiple times within the period of your smallest calendar specifier, such a
 /// second time in the same day, continuing with the previous example.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CalSem;
 
 impl CalSem {
