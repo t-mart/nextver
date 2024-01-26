@@ -1,12 +1,10 @@
-use crate::{
-    scheme::{CalSem, Scheme},
-    specifier::{SemanticSpecifier, Specifier, MAJOR},
-};
-
-// TODO: we need to break this down. first pass: format errors, version errors, increment errors.
-// and then, make a top-level error that accepts these categories as variants.
+// TODO: we need to break this down and have functions return a subset of these that can actually
+// happen. first pass: format errors, version errors, increment errors. and then, make a top-level
+// error that accepts these categories as variants.
 //
 // TODO: Make a conveniece Error type
+//
+// TODO: See where we can use static strs. maybe even lifetimed strs if we break out the categories
 
 /// Errors that can occur in this library
 #[non_exhaustive]
@@ -33,7 +31,7 @@ pub enum NextverError {
     UnterminatedSpecifier { pattern: String },
 
     #[error("`{spec}` was not found in format, try using a format that is present")]
-    SemanticSpecifierNotInFormat { spec: SemanticSpecifier },
+    SemanticSpecifierNotInFormat { spec: String },
 
     #[error("calendar specifiers should be present in format")]
     CalendarNotInFormat,
@@ -43,40 +41,37 @@ pub enum NextverError {
 
     #[error("specifiers must strictly decrease, got `{next}` after `{prev}`")]
     SpecifiersMustStrictlyDecrease {
-        prev: &'static Specifier,
-        next: &'static Specifier,
+        prev: String,
+        next: String,
     },
 
     #[error("in {scheme_name} format, first specifier should be {expected_first}, got `{spec}`")]
     WrongFirstSpecifier {
-        spec: &'static Specifier,
-        scheme_name: &'static str,
-        expected_first: &'static str,
+        spec: String,
+        scheme_name: String,
+        expected_first: String,
     },
 
     #[error("all calendar specifiers should precede all semantic specifiers, got `{next}` after `{prev}`")]
     CalenderMustPrecedeSemantic {
-        prev: &'static Specifier,
-        next: &'static Specifier,
+        prev: String,
+        next: String,
     },
-
-    #[error("{} should not be in a {} format", &MAJOR, CalSem::name())]
-    MajorInCalSemFormat,
 
     #[error("specifier `{next}` should be relative to its predecessor `{prev}`")]
     SpecifierMustBeRelative {
-        prev: &'static Specifier,
-        next: &'static Specifier,
+        prev: String,
+        next: String,
     },
 
     #[error("unacceptable specifier `{spec}` in {scheme_name} format")]
     UnacceptableSpecifier {
-        spec: &'static Specifier,
+        spec: String,
         scheme_name: &'static str,
     },
 
     #[error("format should end with a semantic specifier, got `{last_spec}`")]
-    FormatIncomplete { last_spec: &'static Specifier },
+    FormatIncomplete { last_spec: String },
 
     #[error("format should contain at least one specifier")]
     NoSpecifiersInFormat,

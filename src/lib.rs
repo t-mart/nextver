@@ -131,13 +131,12 @@ mod format;
 mod scheme;
 mod specifier;
 mod version;
-mod specifier2;
 
 pub use crate::error::NextverError;
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
-pub use crate::specifier::SemanticSpecifier;
-pub use crate::version::{CalSemSpecifier, Date, Version};
+pub use crate::specifier::{SemSpecifier, CalSemIncrSpecifier};
+pub use crate::version::{Date, Version};
 
 /// A convenience module appropriate for glob imports (`use nextver::prelude::*;`).
 pub mod prelude {
@@ -145,8 +144,6 @@ pub mod prelude {
     pub use crate::Cal;
     #[doc(no_inline)]
     pub use crate::CalSem;
-    #[doc(no_inline)]
-    pub use crate::CalSemSpecifier;
     #[doc(no_inline)]
     pub use crate::Date;
     #[doc(no_inline)]
@@ -156,7 +153,9 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::Sem;
     #[doc(no_inline)]
-    pub use crate::SemanticSpecifier;
+    pub use crate::CalSemIncrSpecifier;
+    #[doc(no_inline)]
+    pub use crate::SemSpecifier;
     #[doc(no_inline)]
     pub use crate::Version;
     #[doc(no_inline)]

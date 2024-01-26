@@ -71,7 +71,7 @@ fn next(
     // functions to get the semantic specifier from the option, that error if we need it but
     // don't have it
     let sem_spec = || {
-        spec.map(|s| s.to_semantic_specifier())
+        spec.map(|s| s.to_sem_spec())
             .ok_or(NextVerCliError::NoSemanticSpecifier)
     };
     let cal_sem_spec = || {
@@ -113,19 +113,21 @@ enum SemanticSpecifierArg {
 }
 
 impl SemanticSpecifierArg {
-    fn to_semantic_specifier(&self) -> SemanticSpecifier {
+    fn to_sem_spec(&self) -> SemSpecifier {
+        use SemanticSpecifierArg::*;
         match self {
-            SemanticSpecifierArg::Major => SemanticSpecifier::Major,
-            SemanticSpecifierArg::Minor => SemanticSpecifier::Minor,
-            SemanticSpecifierArg::Patch => SemanticSpecifier::Patch,
+            Major => SemSpecifier::Major,
+            Minor => SemSpecifier::Minor,
+            Patch => SemSpecifier::Patch,
         }
     }
 
-    fn to_calsem_specifier(&self) -> Result<CalSemSpecifier, NextVerCliError> {
+    fn to_calsem_specifier(&self) -> Result<CalSemIncrSpecifier, NextVerCliError> {
+        use SemanticSpecifierArg::*;
         match self {
-            SemanticSpecifierArg::Major => Err(NextVerCliError::MajorSpecifierWithCalsem),
-            SemanticSpecifierArg::Minor => Ok(CalSemSpecifier::Minor),
-            SemanticSpecifierArg::Patch => Ok(CalSemSpecifier::Patch),
+            Major => Err(NextVerCliError::MajorSpecifierWithCalsem),
+            Minor => Ok(CalSemIncrSpecifier::Minor),
+            Patch => Ok(CalSemIncrSpecifier::Patch),
         }
     }
 }

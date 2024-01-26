@@ -45,8 +45,6 @@ let next = version.next(&Date::Explicit(2024, 1, 2), &CalSemSpecifier::Patch).un
 assert!(next > version);
 ```
 
-Jump to the specifiers table [here](struct.Format.html#specifier-table).
-
 ## CLI
 
 nextver also comes with a CLI tool, `nextver`, which can be used to quickly increment versions.

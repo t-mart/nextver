@@ -1,66 +1,19 @@
-use crate::scheme::{Cal, CalSem, Scheme, Sem};
-use crate::{format::FormatToken, specifier::*, Format, NextverError};
-use chrono::{Local, NaiveDate, Utc};
-use core::{
-    fmt::{self, Display},
-    panic,
+use crate::{
+    error::NextverError,
+    format::{Format, FormatToken},
+    scheme::{Cal, CalSem, Scheme, Sem},
+    specifier::{CalSemIncrSpecifier, SemSpecifier, Specifier},
 };
-use std::cmp::Ordering;
-use std::marker::PhantomData;
+use chrono::{Local, NaiveDate, Utc};
+use core::fmt::{self, Display};
 
-/**
-Ways to specify a date.
-
-```
-use nextver::Date;
-
-let explicit = Date::Explicit(2021, 2, 3);
-let utc_now = Date::UtcNow;
-let local_now = Date::LocalNow;
-```
-**/
-#[derive(Debug, Clone)]
-pub enum Date {
-    /// Use the current date in UTC, as determined when this variant is used.
-    UtcNow,
-
-    /// Use the current date in the local timezone, as determined when this variant is used.
-    LocalNow,
-
-    /// Build a date from explicit values.
-    ///
-    /// Note that it is possible to create invalid dates, but no validation will be done until this
-    /// date is used by the library. If you are concerned about this use [Date::from] with a
-    /// [chrono::Datelike] instead.
-    Explicit(i32, u32, u32),
-}
-
-impl Date {
-    fn get_date(&self) -> Result<NaiveDate, NextverError> {
-        match self {
-            Self::UtcNow => Ok(Utc::now().date_naive()),
-            Self::LocalNow => Ok(Local::now().date_naive()),
-            Self::Explicit(year, month, day) => NaiveDate::from_ymd_opt(*year, *month, *day).ok_or(
-                NextverError::InvalidDateArguments {
-                    year: *year,
-                    month: *month,
-                    day: *day,
-                },
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum VersionToken<'vs> {
-    Value {
-        value: u32,
-        spec: &'static Specifier,
-    },
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum VersionToken<'vs, S: Scheme> {
+    Value { value: u32, spec: S::Specifier },
     Fixed(&'vs str),
 }
 
-impl<'vs> Display for VersionToken<'vs> {
+impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VersionToken::Value { value, spec } => {
@@ -68,55 +21,6 @@ impl<'vs> Display for VersionToken<'vs> {
                 write!(f, "{}", rendered)
             }
             VersionToken::Fixed(text) => write!(f, "{}", text),
-        }
-    }
-}
-
-impl<'vs> PartialEq for VersionToken<'vs> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                VersionToken::Value {
-                    value: self_value,
-                    spec: self_spec,
-                },
-                VersionToken::Value {
-                    value: other_value,
-                    spec: other_spec,
-                },
-            ) => std::ptr::eq(*self_spec, *other_spec) && self_value == other_value,
-            (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
-                self_text == other_text
-            }
-            // if the tokens are different types, we can't compare them
-            _ => false,
-        }
-    }
-}
-
-impl<'vs> PartialOrd for VersionToken<'vs> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self, other) {
-            (
-                VersionToken::Value {
-                    value: self_value,
-                    spec: self_spec,
-                },
-                VersionToken::Value {
-                    value: other_value,
-                    spec: other_spec,
-                },
-            ) => {
-                if !std::ptr::eq(*self_spec, *other_spec) {
-                    return None;
-                }
-                self_value.partial_cmp(other_value)
-            }
-            (VersionToken::Fixed(self_text), VersionToken::Fixed(other_text)) => {
-                self_text.partial_cmp(other_text)
-            }
-            // if the tokens are different types, we can't compare them
-            _ => None,
         }
     }
 }
@@ -180,16 +84,12 @@ impl<'vs> PartialOrd for VersionToken<'vs> {
 /// ```
 #[derive(Debug, PartialEq, PartialOrd)]
 pub struct Version<'vs, S: Scheme> {
-    pub(crate) tokens: Vec<VersionToken<'vs>>,
-    scheme: PhantomData<S>,
+    pub(crate) tokens: Vec<VersionToken<'vs, S>>,
 }
 
 impl<'vs, S: Scheme> Version<'vs, S> {
-    pub(crate) fn new(tokens: Vec<VersionToken<'vs>>) -> Self {
-        Self {
-            tokens,
-            scheme: PhantomData,
-        }
+    pub(crate) fn new(tokens: Vec<VersionToken<'vs, S>>) -> Self {
+        Self { tokens }
     }
 
     /// Parses a version string against a [Format], and returns a [Version] object if the version
@@ -223,9 +123,9 @@ impl<'vs, S: Scheme> Version<'vs, S> {
         for (match_, format_token) in group_captures.zip(&format.tokens) {
             let Some(match_) = match_ else {
                 // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
-                // currently construct our format patterns this way, but just in case. Plus we get a
-                // destructure on the Option
-                continue;
+                // currently construct our format patterns this way, so this is almost certainly a
+                // bug. Plus we get a destructure on the Option
+                panic!("unexpected empty version pattern group")
             };
 
             let text = match_.as_str();
@@ -235,7 +135,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     let value = specifier.parse_value_str(text);
                     VersionToken::Value {
                         value,
-                        spec: specifier,
+                        spec: *specifier,
                     }
                 }
                 FormatToken::Literal(format_text) => {
@@ -252,15 +152,12 @@ impl<'vs, S: Scheme> Version<'vs, S> {
             tokens.push(token);
         }
 
-        Ok(Self {
-            tokens,
-            scheme: PhantomData,
-        })
+        Ok(Self { tokens })
     }
 
     fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextverError>
     where
-        F: FnMut((&u32, &'static Specifier)) -> Result<u32, NextverError>,
+        F: FnMut((&u32, &S::Specifier)) -> Result<u32, NextverError>,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
@@ -270,9 +167,10 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     let new_value = f((value, spec))?;
                     VersionToken::Value {
                         value: new_value,
-                        spec,
+                        spec: *spec,
                     }
                 }
+                // TODO: see if we can impl clone here on a token
                 _ => token.clone(),
             };
             new_tokens.push(new_token);
@@ -314,42 +212,77 @@ impl<'vs> Version<'vs, Sem> {
     ///
     /// - Returns a [NextverError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
-    pub fn next(&self, specifier: &SemanticSpecifier) -> Result<Self, NextverError> {
+    pub fn next(&self, specifier: &SemSpecifier) -> Result<Self, NextverError> {
         // track if the semantic level was found in the format string.
         let mut spec_found = false;
 
         // track if we should increment or reset to 0
         let mut already_bumped = false;
 
-        let new_version = self.new_map_value_tokens(|(value, spec)| {
-            let new_value = if let Specifier::Semantic(this_spec) = spec {
-                if specifier >= this_spec {
-                    if specifier == this_spec {
-                        spec_found = true;
-                    }
-                    let incremented = this_spec.increment(value, already_bumped);
-                    already_bumped = true;
-                    incremented
-                } else {
-                    *value
+        let new_version = self.new_map_value_tokens(|(value, this_spec)| {
+            let new_value = if specifier >= this_spec {
+                if specifier == this_spec {
+                    spec_found = true;
                 }
+                let incremented = this_spec.next(value, already_bumped);
+                already_bumped = true;
+                incremented
             } else {
-                // we should never get here because our format is guaranteed to be semantic-only. to
-                // avoid this would require a rearchitecting to make specifiers be generic to the
-                // various schemes (consider that some specifiers are shared between schemes). not
-                // sure this is possible cleanly.
-                panic!("Non-semantic specifier in semantic version")
+                *value
             };
             Ok(new_value)
         })?;
 
         if !spec_found {
             return Err(NextverError::SemanticSpecifierNotInFormat {
-                spec: specifier.clone(),
+                spec: specifier.to_string(),
             });
         }
 
         Ok(new_version)
+    }
+}
+
+/**
+Ways to specify a date.
+
+```
+use nextver::Date;
+
+let explicit = Date::Explicit(2021, 2, 3);
+let utc_now = Date::UtcNow;
+let local_now = Date::LocalNow;
+```
+**/
+#[derive(Debug, Clone)]
+pub enum Date {
+    /// Use the current date in UTC, as determined when this variant is used.
+    UtcNow,
+
+    /// Use the current date in the local timezone, as determined when this variant is used.
+    LocalNow,
+
+    /// Build a date from explicit values.
+    ///
+    /// Note that it is possible to create invalid dates, but no validation will be done until this
+    /// date is used by the library. If you are concerned about this use [Date::from] with a
+    /// [chrono::Datelike] instead.
+    Explicit(i32, u32, u32),
+}
+
+impl Date {
+    fn get_date(&self) -> Result<NaiveDate, NextverError> {
+        match self {
+            Self::UtcNow => Ok(Utc::now().date_naive()),
+            Self::LocalNow => Ok(Local::now().date_naive()),
+            Self::Explicit(year, month, day) => NaiveDate::from_ymd_opt(*year, *month, *day).ok_or(
+                NextverError::InvalidDateArguments {
+                    year: *year,
+                    month: *month,
+                    day: *day,
+                },
+            ),
+        }
     }
 }
 
@@ -398,15 +331,13 @@ impl<'vs> Version<'vs, Cal> {
         // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
         let mut cal_updated = false;
 
-        let new_version = self.new_map_value_tokens(|(old_value, spec)| {
-            let new_value = if let Specifier::Calendar(this_spec) = spec {
-                let updated = this_spec.update(&naive_date)?;
+        let new_version = self.new_map_value_tokens(|(old_value, this_spec)| {
+            let new_value = {
+                let updated = this_spec.next(&naive_date)?;
                 if updated != *old_value {
                     cal_updated = true;
                 }
                 updated
-            } else {
-                panic!("Non-calendar specifier in calendar version")
             };
             Ok(new_value)
         })?;
@@ -419,25 +350,6 @@ impl<'vs> Version<'vs, Cal> {
     }
 }
 
-/// A semantic specifier, used as an argument to [Version<CalSem>::next]. It only includes `Minor`
-/// and `Patch` variants because `major` is not permitted in a [CalSem] format.
-///
-/// Note that this name is a bit of a misnomer because it's not just a "CalSem specifier" — it's
-/// a "CalSem semantic specifier". But that's a bit of a mouthful.
-pub enum CalSemSpecifier {
-    Minor,
-    Patch,
-}
-
-impl CalSemSpecifier {
-    fn spec(&self) -> &'static SemanticSpecifier {
-        match self {
-            Self::Minor => &SemanticSpecifier::Minor,
-            Self::Patch => &SemanticSpecifier::Patch,
-        }
-    }
-}
-
 impl<'vs> Version<'vs, CalSem> {
     /// Returns a new [Version] where all calendar values in this version are updated to match the
     /// given [Date]. If the calendar values would not change, the version is incremented by the
@@ -447,11 +359,10 @@ impl<'vs> Version<'vs, CalSem> {
     pub fn next(
         &self,
         date: &Date,
-        semantic_specifier: &CalSemSpecifier,
+        semantic_specifier: &CalSemIncrSpecifier,
     ) -> Result<Self, NextverError> {
         // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
-        // map to a regular semantic specifier
         let semantic_specifier = semantic_specifier.spec();
 
         let naive_date = date.get_date()?;
@@ -466,37 +377,28 @@ impl<'vs> Version<'vs, CalSem> {
         let mut cal_updated = false;
 
         let new_version = self.new_map_value_tokens(|(old_value, spec)| {
-            let new_value = match spec {
-                Specifier::Calendar(this_spec) => {
-                    let updated = this_spec.update(&naive_date)?;
-                    if updated != *old_value {
-                        cal_updated = true;
-                    }
-                    updated
+            let new_value = if spec.is_cal() {
+                let new_value = spec.next(&naive_date, old_value, already_bumped)?;
+                if new_value != *old_value {
+                    cal_updated = true;
                 }
-                Specifier::Semantic(this_spec) => {
-                    if !cal_updated {
-                        if semantic_specifier >= this_spec {
-                            if semantic_specifier == this_spec {
-                                spec_found = true;
-                            }
-                            let incremented = this_spec.increment(old_value, already_bumped);
-                            already_bumped = true;
-                            incremented
-                        } else {
-                            *old_value
-                        }
-                    } else {
-                        *old_value
-                    }
+                new_value
+            } else if !cal_updated && &semantic_specifier >= spec {
+                let new_value = spec.next(&naive_date, old_value, already_bumped)?;
+                already_bumped = true;
+                if &semantic_specifier == spec {
+                    spec_found = true;
                 }
+                new_value
+            } else {
+                *old_value
             };
             Ok(new_value)
         })?;
 
         if !spec_found {
             return Err(NextverError::SemanticSpecifierNotInFormat {
-                spec: semantic_specifier.clone(),
+                spec: semantic_specifier.to_string(),
             });
         }
 
