@@ -8,10 +8,11 @@
 //!
 //! ## Examples
 //!
-//! Below, the text in `[brackets]` is a specifier. See what they mean [here](#table).
+//! *Below, the text in `[brackets]` is a specifier. See what they mean [here](#table).*
+//! 
+//! Quickly get a next version:
 //!
 //! ```
-//! // quickly get a next version
 //! use nextver::prelude::*;
 //!
 //! let next = Sem::next(
@@ -20,7 +21,7 @@
 //!   &SemanticSpecifier::Minor   // the specifier to increment
 //! ).unwrap();
 //! assert_eq!(next.to_string(), "1.3.0");
-//! 
+//!
 //! let next = CalSem::next(
 //!   "[YYYY].[MM]-[PATCH]",       // format string
 //!   "2023.12-42",                // current version string
@@ -29,12 +30,14 @@
 //! ).unwrap();
 //! assert_eq!(next.to_string(), "2024.01-0");
 //! ```
+//! 
+//! 
+//! Or, break down the steps for reusability:
 //!
 //! ```
-//! // or, break down the steps for reusability
 //! use nextver::prelude::*;
-//! 
-//! let format = CalSem::new_format("[YYYY].[MM].[PATCH]");
+//!
+//! let format = CalSem::new_format("[YYYY].[MM].[PATCH]").unwrap();
 //! let version = Version::parse("2023.12.42", &format).unwrap();
 //! let next = version.next(&Date::Explicit(2024, 1, 2), &CalSemSpecifier::Patch).unwrap();
 //! assert!(next > version);
@@ -109,22 +112,23 @@
 //! // always consistent: zero-padded `0M` is non-greedy, always two digits
 //! let format = Cal::new_format("[YYYY][0M]");
 //! ```
-//! 
+//!
 //! ### Escaping Brackets
-//! 
+//!
 //! If you want to use a literal `[` in your format, you must escape it with a preceeding backslash.
-//! 
+//!
 //! `]` does not need to be escaped.
-//! 
+//!
 //! ```
 //! use nextver::prelude::*;
-//! 
+//!
 //! // double backslash in regular strings
 //! let format = Sem::new_format("[MAJOR]-\\[literal-text]");
 //! // or use raw strings to just use one backslash
 //! let format = Sem::new_format(r"[MAJOR]-\[literal-text]");
 //! ```
 #![feature(lazy_cell)]
+#![warn(missing_docs)]
 
 mod error;
 mod format;
@@ -132,10 +136,10 @@ mod scheme;
 mod specifier;
 mod version;
 
-pub use crate::error::NextverError;
+pub use crate::error::{FormatError, CompositeError, VersionError};
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
-pub use crate::specifier::{SemSpecifier, CalSemIncrSpecifier};
+pub use crate::specifier::{CalSemIncrSpecifier, SemSpecifier};
 pub use crate::version::{Date, Version};
 
 /// A convenience module appropriate for glob imports (`use nextver::prelude::*;`).
@@ -145,24 +149,27 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::CalSem;
     #[doc(no_inline)]
+    pub use crate::CalSemIncrSpecifier;
+    #[doc(no_inline)]
     pub use crate::Date;
     #[doc(no_inline)]
     pub use crate::Format;
+    #[doc(no_inline)]
+    pub use crate::FormatError;
+    #[doc(no_inline)]
+    pub use crate::CompositeError;
     #[doc(no_inline)]
     pub use crate::Scheme;
     #[doc(no_inline)]
     pub use crate::Sem;
     #[doc(no_inline)]
-    pub use crate::CalSemIncrSpecifier;
-    #[doc(no_inline)]
     pub use crate::SemSpecifier;
     #[doc(no_inline)]
     pub use crate::Version;
     #[doc(no_inline)]
-    pub use crate::NextverError;
+    pub use crate::VersionError;
 }
 
-// TODO: we might be able do make this whole library non-allocating.
 
 // TODO: take a look at how chrono does string -> time and time -> string with strftime and strptime
 // we're kinda doing the same thing, and that API is prolly good, and its implementation. also take

@@ -1,11 +1,11 @@
-use crate::{error::NextverError, scheme::Scheme, specifier::Specifier, version::Version};
+use crate::{error::{FormatError, VersionError}, scheme::Scheme, specifier::Specifier, version::Version};
 use core::fmt::{self, Display};
 use regex::Regex;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FormatToken<'fs, S: Scheme> {
     Specifier(S::Specifier),
     Literal(&'fs str),
@@ -140,7 +140,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     /// - [`NextverError::UnknownSpecifier`] if an unknown specifier is found (e.g., `[FOO]`).
     /// - [`NextverError::UnterminatedSpecifier`] if a specifier is not terminated with a
     ///   closing square bracket (`]`).
-    pub(crate) fn parse(format_str: &'fs str) -> Result<Self, NextverError> {
+    pub(crate) fn parse(format_str: &'fs str) -> Result<Self, FormatError> {
         let mut format = format_str;
         let mut tokens = Vec::with_capacity(S::max_tokens());
         let mut last_spec: Option<S::Specifier> = None;
@@ -171,7 +171,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                         last_spec.partial_cmp(&spec),
                         Some(Ordering::Less) | Some(Ordering::Equal) | None
                     ) {
-                        return Err(NextverError::SpecifiersMustStrictlyDecrease {
+                        return Err(FormatError::SpecifiersMustStepDecrease {
                             prev: last_spec.to_string(),
                             next: spec.to_string(),
                         });
@@ -179,9 +179,9 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                 } else {
                     // check that this is an ok first spec
                     if !spec.can_be_first() {
-                        return Err(NextverError::WrongFirstSpecifier {
+                        return Err(FormatError::WrongFirstSpecifier {
                             spec: spec.to_string(),
-                            scheme_name: S::name().to_string(),
+                            scheme_name: S::name(),
                             expected_first: S::Specifier::first_variants()
                                 .iter()
                                 .map(|s| s.to_string())
@@ -209,13 +209,14 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                         })
                         .ok_or_else(|| {
                             // didn't find closing bracket
-                            NextverError::UnterminatedSpecifier {
+                            FormatError::UnterminatedSpecifier {
                                 pattern: format.to_owned(),
                             }
                         })?;
-                    // found closing, but unknown
-                    return Err(NextverError::UnknownSpecifier {
-                        pattern: format[..closing_index + 1].to_owned(),
+                    // found closing, but unknown for this scheme
+                    return Err(FormatError::UnacceptableSpecifier {
+                        spec: format[..closing_index + 1].to_owned(),
+                        scheme_name: S::name(),
                     });
                 } else if format.starts_with(r"\[") {
                     // escaped opening bracket
@@ -255,29 +256,35 @@ impl<'fs, S: Scheme> Format<'fs, S> {
 
         if let Some(last_spec) = last_spec {
             if !last_spec.can_be_last() {
-                return Err(NextverError::FormatIncomplete {
+                return Err(FormatError::FormatIncomplete {
                     last_spec: last_spec.to_string(),
+                    scheme_name: S::name(),
                 });
             }
         } else {
-            return Err(NextverError::NoSpecifiersInFormat);
+            return Err(FormatError::NoSpecifiersInFormat);
         }
 
         Ok(Self::from_tokens(tokens))
     }
 
+    /// Create a new version from this format and a version string.
+    /// 
+    /// This is equivalent to calling `format.parse_version(version_str)`.
     pub fn parse_version<'vs>(
         &self,
         version_str: &'vs str,
-    ) -> Result<Version<'vs, S>, NextverError> {
+    ) -> Result<Version<'vs, S>, VersionError> {
         Version::parse(version_str, self)
     }
 }
 
 impl<'fs, S: Scheme> PartialEq for Format<'fs, S> {
     /// Returns true if the two formats would have the same string representation.
+    // In nightly, clippy currently calling this an `unconditional_recursion`. Almost certainly a
+    // false positive. Bug reports exist.
     fn eq(&self, other: &Self) -> bool {
-        self.tokens == other.tokens
+        self.tokens.eq(&other.tokens)
     }
 }
 
@@ -657,7 +664,7 @@ mod tests {
         let formats = ["[foo]", "[]", "[]]"];
         for format in formats {
             let actual = Sem::new_format(format);
-            assert!(matches!(actual, Err(NextverError::UnknownSpecifier { .. })));
+            assert!(matches!(actual, Err(FormatError::UnacceptableSpecifier { .. })));
         }
     }
 
@@ -668,7 +675,7 @@ mod tests {
             let actual = Sem::new_format(format);
             assert_eq!(
                 actual,
-                Err(NextverError::UnterminatedSpecifier {
+                Err(FormatError::UnterminatedSpecifier {
                     pattern: format.to_owned(),
                 })
             )

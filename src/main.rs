@@ -2,9 +2,12 @@ use clap::{arg, command, Parser, Subcommand, ValueEnum};
 use nextver::prelude::*;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum NextVerCliError {
+enum NextVerCliError {
     #[error("{0}")]
-    LibraryError(#[from] NextverError),
+    LibraryCompositeError(#[from] CompositeError),
+
+    #[error("{0}")]
+    LibraryVersionError(#[from] VersionError),
 
     #[error("format string was invalid for all schemes")]
     NoValidScheme,

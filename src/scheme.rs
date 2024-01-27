@@ -1,5 +1,5 @@
 use crate::{
-    error::NextverError,
+    error::{FormatError, CompositeError},
     format::Format,
     specifier::{CalSemSpecifier, CalSpecifier, SemSpecifier, Specifier, CalSemIncrSpecifier},
     version::{Date, Version},
@@ -8,7 +8,7 @@ use core::fmt::Debug;
 
 pub(crate) mod priv_trait {
     use super::*;
-    pub(crate) trait Scheme: Sized + Debug + PartialEq + Eq + Clone + Copy {
+    pub(crate) trait Scheme: Sized + Debug + PartialEq + Eq + Clone {
         /// The kinds of specifiers this scheme uses
         type Specifier: Specifier;
 
@@ -34,7 +34,7 @@ pub(crate) mod priv_trait {
 #[allow(private_bounds)]
 pub trait Scheme: priv_trait::Scheme {
     /// Create a new format from a format string for this scheme.
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError>;
+    fn new_format(format_str: &str) -> Result<Format<Self>, FormatError>;
 
     /// Returns a human readable name of the scheme for error messages.
     fn name() -> &'static str;
@@ -47,9 +47,9 @@ pub trait Scheme: priv_trait::Scheme {
     fn new_version<'vs>(
         format_str: &str,
         version_str: &'vs str,
-    ) -> Result<Version<'vs, Self>, NextverError> {
+    ) -> Result<Version<'vs, Self>, CompositeError> {
         let format = Self::new_format(format_str)?;
-        let version = Version::parse(version_str, &format)?;
+        let version = format.parse_version(version_str)?;
         Ok(version)
     }
 
@@ -61,15 +61,15 @@ pub trait Scheme: priv_trait::Scheme {
     fn is_valid(
         format_str: &str,
         version_str: &str,
-    ) -> Result<bool, NextverError> {
+    ) -> Result<bool, CompositeError> {
         let format = Self::new_format(format_str)?;
-        let version = Version::parse(version_str, &format);
+        let version = format.parse_version(version_str);
         Ok(version.is_ok())
     }
 }
 
 /// Scheme for formats that have only semantic specifiers, such as `[MAJOR].[MINOR].[PATCH]`.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Sem;
 
 impl Sem {
@@ -77,7 +77,7 @@ impl Sem {
         format_str: &str,
         version_str: &str,
         specifier: &SemSpecifier,
-    ) -> Result<String, NextverError> {
+    ) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(specifier)?;
@@ -90,7 +90,7 @@ impl Scheme for Sem {
         "semantic"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, FormatError> {
         Format::parse(format_str)
     }
 }
@@ -109,11 +109,11 @@ impl priv_trait::Scheme for Sem {
 /// This scheme is less useful than [CalSem] because there is no way to increment it twice in the
 /// same period of its least significant specifier. For example, a version with format
 /// `[YYYY].[MM].[DD]` can only be incremented/updated once per day.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Cal;
 
 impl Cal {
-    pub fn next(format_str: &str, version_str: &str, date: &Date) -> Result<String, NextverError> {
+    pub fn next(format_str: &str, version_str: &str, date: &Date) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(date)?;
@@ -126,7 +126,7 @@ impl Scheme for Cal {
         "calendar"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, FormatError> {
         Format::parse(format_str)
     }
 }
@@ -146,7 +146,7 @@ impl priv_trait::Scheme for Cal {
 /// You would have such a format if you want to be able to increase
 /// your version multiple times within the period of your smallest calendar specifier, such a
 /// second time in the same day, continuing with the previous example.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CalSem;
 
 impl CalSem {
@@ -155,7 +155,7 @@ impl CalSem {
         version_str: &str,
         date: &Date,
         semantic_specifier: &CalSemIncrSpecifier,
-    ) -> Result<String, NextverError> {
+    ) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
         let next_version = version.next(date, semantic_specifier)?;
@@ -164,7 +164,7 @@ impl CalSem {
 }
 
 impl CalSem {
-    pub fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
+    pub fn new_format(format_str: &str) -> Result<Format<Self>, FormatError> {
         Format::parse(format_str)
     }
 }
@@ -174,7 +174,7 @@ impl Scheme for CalSem {
         "calendar-semantic"
     }
 
-    fn new_format(format_str: &str) -> Result<Format<Self>, NextverError> {
+    fn new_format(format_str: &str) -> Result<Format<Self>, FormatError> {
         Format::parse(format_str)
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    error::NextverError,
+    error::VersionError,
     format::{Format, FormatToken},
     scheme::{Cal, CalSem, Scheme, Sem},
     specifier::{CalSemIncrSpecifier, SemSpecifier, Specifier},
@@ -7,10 +7,10 @@ use crate::{
 use chrono::{Local, NaiveDate, Utc};
 use core::fmt::{self, Display};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VersionToken<'vs, S: Scheme> {
     Value { value: u32, spec: S::Specifier },
-    Fixed(&'vs str),
+    Literal(&'vs str),
 }
 
 impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
@@ -20,7 +20,44 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
                 let rendered = spec.format_value(value);
                 write!(f, "{}", rendered)
             }
-            VersionToken::Fixed(text) => write!(f, "{}", text),
+            VersionToken::Literal(text) => write!(f, "{}", text),
+        }
+    }
+}
+
+impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // it only makes sense to compare values if they are the same type, thus, only a partial
+        // ordering.
+        use VersionToken::*;
+        match (self, other) {
+            (Literal(a), Literal(b)) => {
+                // there is no ordering for literals: they're either equal or not
+                if a.eq(b) {
+                    Some(std::cmp::Ordering::Equal)
+                } else {
+                    None
+                }
+            }
+
+            (
+                Value {
+                    value: val_a,
+                    spec: spec_a,
+                },
+                Value {
+                    value: val_b,
+                    spec: spec_b,
+                },
+            ) => {
+                if spec_a.eq(spec_b) {
+                    val_a.partial_cmp(val_b)
+                } else {
+                    None
+                }
+            }
+
+            _ => None,
         }
     }
 }
@@ -37,7 +74,7 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
 /// Quick start:
 ///
 /// ```
-/// use nextver::{Version, NextverError, SemanticLevel};
+/// use nextver::prelude::*;
 ///
 /// let version = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
 /// let incremented = version.increment(Some(&SemanticLevel::Minor), None).unwrap();
@@ -45,13 +82,13 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
 /// assert!(version < incremented);
 ///
 /// let invalid = Version::from_parsed_format("[MAJOR].[MINOR].[PATCH]", "1.foo.3");
-/// assert!(matches!(invalid, Err(NextverError::VersionFormatMismatch {..})));
+/// assert!(matches!(invalid, Err(VersionError::VersionFormatMismatch {..})));
 /// ```
 ///
 /// Or, use a previously created [Format] object:
 ///
 /// ```
-/// use nextver::{Format, Version};
+/// use nextver::prelude::*;
 ///
 /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
 /// let version = Version::parse("1.2.3", format.clone());
@@ -82,7 +119,7 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
 /// assert_eq!("2024.124", incremented.to_string());
 /// assert!(version < incremented);
 /// ```
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Version<'vs, S: Scheme> {
     pub(crate) tokens: Vec<VersionToken<'vs, S>>,
 }
@@ -93,7 +130,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     }
 
     /// Parses a version string against a [Format], and returns a [Version] object if the version
-    /// string matches the format. Otherwise, returns a [NextverError].
+    /// string matches the format. Otherwise, returns a [VersionError].
     ///
     /// If you just need a one-off parse or validation, you can use [Version::from_parsed_format] or
     /// [Version::is_valid] instead, which create [Format] objects implicitly.
@@ -106,10 +143,10 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     /// # Errors
     ///
     /// - If the version string does not match the format string, returns a
-    ///   [NextverError::VersionFormatMismatch].
-    pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, NextverError> {
+    ///   [VersionError::VersionFormatMismatch].
+    pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, VersionError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
-            return Err(NextverError::VersionFormatMismatch {
+            return Err(VersionError::VersionFormatMismatch {
                 version_string: version_str.to_owned(),
                 format_string: format.to_string(),
             });
@@ -140,12 +177,12 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                 }
                 FormatToken::Literal(format_text) => {
                     if !text.eq(*format_text) {
-                        return Err(NextverError::VersionFormatMismatch {
+                        return Err(VersionError::VersionFormatMismatch {
                             version_string: version_str.to_owned(),
                             format_string: format.to_string(),
                         });
                     }
-                    VersionToken::Fixed(text)
+                    VersionToken::Literal(text)
                 }
             };
 
@@ -155,9 +192,9 @@ impl<'vs, S: Scheme> Version<'vs, S> {
         Ok(Self { tokens })
     }
 
-    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextverError>
+    fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionError>
     where
-        F: FnMut((&u32, &S::Specifier)) -> Result<u32, NextverError>,
+        F: FnMut((&u32, &S::Specifier)) -> Result<u32, VersionError>,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
@@ -170,13 +207,34 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                         spec: *spec,
                     }
                 }
-                // TODO: see if we can impl clone here on a token
                 _ => token.clone(),
             };
             new_tokens.push(new_token);
         }
 
         Ok(Version::new(new_tokens))
+    }
+}
+
+impl<'vs, S: Scheme> PartialOrd for Version<'vs, S> {
+    /// Compares two versions. This is only a partial ordering it is only meaningful to compare two
+    /// versions when they come from the same format.
+    /// 
+    /// Returns `None` when either of the following are true:
+    /// 
+    /// - The number of *tokens* in the versions are different. Tokens are either literal text or
+    ///   specifier values.
+    /// - For two given tokens, they are not of the same type. E.g., one is a literal, one is a
+    ///   value.
+    /// - For two given literal tokens, the text is not the same.
+    /// - For two given value tokens, they are not of the same specifier type. E.g., one is a
+    ///  `[YYYY]` value, one is a `[YY]` value.
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.tokens.len() != other.tokens.len() {
+            None
+        } else {
+            self.tokens.partial_cmp(&other.tokens)
+        }
     }
 }
 
@@ -210,9 +268,9 @@ impl<'vs> Version<'vs, Sem> {
     ///
     /// # Errors
     ///
-    /// - Returns a [NextverError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
+    /// - Returns a [VersionError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
-    pub fn next(&self, specifier: &SemSpecifier) -> Result<Self, NextverError> {
+    pub fn next(&self, specifier: &SemSpecifier) -> Result<Self, VersionError> {
         // track if the semantic level was found in the format string.
         let mut spec_found = false;
 
@@ -234,7 +292,7 @@ impl<'vs> Version<'vs, Sem> {
         })?;
 
         if !spec_found {
-            return Err(NextverError::SemanticSpecifierNotInFormat {
+            return Err(VersionError::SemanticSpecifierNotInFormat {
                 spec: specifier.to_string(),
             });
         }
@@ -271,12 +329,12 @@ pub enum Date {
 }
 
 impl Date {
-    fn get_date(&self) -> Result<NaiveDate, NextverError> {
+    fn get_date(&self) -> Result<NaiveDate, VersionError> {
         match self {
             Self::UtcNow => Ok(Utc::now().date_naive()),
             Self::LocalNow => Ok(Local::now().date_naive()),
             Self::Explicit(year, month, day) => NaiveDate::from_ymd_opt(*year, *month, *day).ok_or(
-                NextverError::InvalidDateArguments {
+                VersionError::InvalidDateArguments {
                     year: *year,
                     month: *month,
                     day: *day,
@@ -313,9 +371,9 @@ impl<'vs> Version<'vs, Cal> {
     /// # Errors
     ///
     /// - If `date` provided is a [Date::Explicit] and the date values is do not represent a valid
-    ///   date, returns a [NextverError::InvalidDateArguments].
+    ///   date, returns a [VersionError::InvalidDateArguments].
     ///
-    ///  - Returns a [NextverError::NegativeYearValue]...
+    ///  - Returns a [VersionError::NegativeYearValue]...
     ///
     ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
     ///      specifier.
@@ -325,7 +383,7 @@ impl<'vs> Version<'vs, Cal> {
     ///
     ///    This is because the formatted values would be negative, which would affect parsing. [See
     ///    specifiers for more](struct.Format.html#specifier-table).
-    pub fn next(&self, date: &Date) -> Result<Self, NextverError> {
+    pub fn next(&self, date: &Date) -> Result<Self, VersionError> {
         let naive_date = date.get_date()?;
 
         // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
@@ -343,7 +401,7 @@ impl<'vs> Version<'vs, Cal> {
         })?;
 
         if !cal_updated {
-            return Err(NextverError::NoCalendarChange);
+            return Err(VersionError::NoCalendarChange);
         }
 
         Ok(new_version)
@@ -360,7 +418,7 @@ impl<'vs> Version<'vs, CalSem> {
         &self,
         date: &Date,
         semantic_specifier: &CalSemIncrSpecifier,
-    ) -> Result<Self, NextverError> {
+    ) -> Result<Self, VersionError> {
         // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
         let semantic_specifier = semantic_specifier.spec();
@@ -397,7 +455,7 @@ impl<'vs> Version<'vs, CalSem> {
         })?;
 
         if !spec_found {
-            return Err(NextverError::SemanticSpecifierNotInFormat {
+            return Err(VersionError::SemanticSpecifierNotInFormat {
                 spec: semantic_specifier.to_string(),
             });
         }
@@ -442,7 +500,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -469,7 +527,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -496,7 +554,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -523,7 +581,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -549,7 +607,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -575,7 +633,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -609,7 +667,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -645,7 +703,7 @@ mod tests {
             } else {
                 assert!(matches!(
                     version,
-                    Err(NextverError::VersionFormatMismatch { .. })
+                    Err(VersionError::VersionFormatMismatch { .. })
                 ));
             }
         }
@@ -838,7 +896,7 @@ mod tests {
     //             let version = Version::parse("1", format).unwrap();
     //             let actual = version.increment(&sem_level);
     //             assert_eq!(
-    //                 Err(NextverError::SemanticLevelNotInFormat {
+    //                 Err(VersionError::SemanticLevelNotInFormat {
     //                     name: sem_level.name(),
     //                 }),
     //                 actual
@@ -855,7 +913,7 @@ mod tests {
     //         let actual = version.update(&DATE_INVALID);
     //         assert!(matches!(
     //             actual,
-    //             Err(NextverError::InvalidDateArguments { .. })
+    //             Err(VersionError::InvalidDateArguments { .. })
     //         ));
     //     }
 
@@ -868,7 +926,7 @@ mod tests {
     //         dbg!(&actual);
     //         assert!(matches!(
     //             actual,
-    //             Err(NextverError::NegativeYearValue { .. })
+    //             Err(VersionError::NegativeYearValue { .. })
     //         ));
     //     }
 
@@ -881,7 +939,7 @@ mod tests {
     //             let actual = version.update(&DATE_1998_01_01);
     //             assert!(matches!(
     //                 actual,
-    //                 Err(NextverError::NegativeYearValue { .. })
+    //                 Err(VersionError::NegativeYearValue { .. })
     //             ));
     //         }
     //     }
@@ -897,7 +955,7 @@ mod tests {
     //             let format = Format::parse(format).unwrap();
     //             let version = Version::parse(version, format).unwrap();
     //             let actual = version.update(&DATE_2002_02_02);
-    //             assert_eq!(Err(NextverError::NoCalendarChange), actual);
+    //             assert_eq!(Err(VersionError::NoCalendarChange), actual);
     //         }
     //     }
 

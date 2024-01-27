@@ -1,10 +1,10 @@
-use crate::NextverError;
+use crate::error::VersionError;
 use chrono::{Datelike, NaiveDate};
 use std::cmp::Ordering;
 use std::fmt::{self, Debug, Display};
 
 type Next = u32;
-type NextResult = Result<u32, NextverError>;
+type NextResult = Result<u32, VersionError>;
 type NextDateFn = fn(&NaiveDate) -> NextResult;
 
 fn sem_next(cur_val: &u32, already_bumped: bool) -> Next {
@@ -20,7 +20,7 @@ fn full_year_next(date: &NaiveDate) -> NextResult {
     let year = date.year();
     if year <= 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(NextverError::NegativeYearValue { year })
+        Err(VersionError::NegativeYearValue { year })
     } else {
         Ok(year as u32)
     }
@@ -33,7 +33,7 @@ fn short_year_next(date: &NaiveDate) -> NextResult {
     let diff = year - 2000;
     if diff < 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(NextverError::NegativeYearValue { year })
+        Err(VersionError::NegativeYearValue { year })
     } else {
         Ok(diff as u32)
     }
@@ -47,11 +47,11 @@ fn weeks_from_sunday_next(date: &NaiveDate) -> NextResult {
     Ok((6 + date.ordinal() - days_from_sunday) / 7)
 }
 
-fn month_next(date: &NaiveDate) -> Result<u32, NextverError> {
+fn month_next(date: &NaiveDate) -> Result<u32, VersionError> {
     Ok(date.month())
 }
 
-fn day_next(date: &NaiveDate) -> Result<u32, NextverError> {
+fn day_next(date: &NaiveDate) -> Result<u32, VersionError> {
     Ok(date.day())
 }
 
@@ -251,7 +251,7 @@ pub(crate) enum CalSpecifier {
 }
 
 impl CalSpecifier {
-    pub(crate) fn next(&self, date: &NaiveDate) -> Result<u32, NextverError> {
+    pub(crate) fn next(&self, date: &NaiveDate) -> Result<u32, VersionError> {
         match &self {
             CalSpecifier::Year(type_) => match type_ {
                 YearType::Full => YEAR_FULL_NEXT_FN(date),
@@ -435,7 +435,7 @@ impl CalSemSpecifier {
         date: &NaiveDate,
         cur_val: &u32,
         already_bumped: bool,
-    ) -> Result<u32, NextverError> {
+    ) -> Result<u32, VersionError> {
         match &self {
             CalSemSpecifier::Year(type_) => match type_ {
                 YearType::Full => YEAR_FULL_NEXT_FN(date),
