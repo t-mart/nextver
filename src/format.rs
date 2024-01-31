@@ -1,14 +1,28 @@
-use crate::{error::{FormatError, VersionError}, scheme::Scheme, specifier::Specifier, version::Version};
+use crate::{
+    error::{FormatError, VersionError},
+    scheme::Scheme,
+    specifier::Specifier,
+    version::Version,
+};
 use core::fmt::{self, Display};
 use regex::Regex;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) enum FormatToken<'fs, S: Scheme> {
-    Specifier(S::Specifier),
+    Specifier(&'static S::Specifier),
     Literal(&'fs str),
+}
+
+impl<'fs, S: Scheme> Clone for FormatToken<'fs, S> {
+    fn clone(&self) -> Self {
+        match self {
+            FormatToken::Specifier(spec) => FormatToken::Specifier(*spec),
+            FormatToken::Literal(text) => FormatToken::Literal(text),
+        }
+    }
 }
 
 impl<'fs, S: Scheme> FormatToken<'fs, S> {
@@ -117,13 +131,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
             let tokens_subpattern = self
                 .tokens
                 .iter()
-                .map(|format_token| {
-                    debug_assert!({
-                        let pattern = format_token.version_pattern_group();
-                        pattern.starts_with('(') && pattern.ends_with(')') && pattern.len() > 2
-                    });
-                    format_token.version_pattern_group()
-                })
+                .map(FormatToken::version_pattern_group)
                 .collect::<Vec<_>>()
                 .join("");
             let pattern = format!("^{tokens_subpattern}$");
@@ -143,32 +151,18 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     pub(crate) fn parse(format_str: &'fs str) -> Result<Self, FormatError> {
         let mut format = format_str;
         let mut tokens = Vec::with_capacity(S::max_tokens());
-        let mut last_spec: Option<S::Specifier> = None;
+        let mut last_spec: Option<&'static S::Specifier> = None;
 
         while !format.is_empty() {
-            let matched_spec = 'spec_find: {
-                for spec in S::Specifier::iter_all() {
-                    let format_pattern = spec.format_pattern();
-
-                    debug_assert!({
-                        format_pattern.starts_with('[')
-                            && format_pattern.ends_with(']')
-                            && format_pattern.len() > 2
-                    });
-
-                    if format.starts_with(format_pattern) {
-                        break 'spec_find Some(spec);
-                    }
-                }
-                None
-            };
+            let matched_spec =
+                S::Specifier::iter_all().find(|spec| format.starts_with(spec.format_pattern()));
 
             let consume_len = if let Some(spec) = matched_spec {
                 // check that specifiers are in order
                 if let Some(last_spec) = last_spec {
                     // if !(last_spec > spec) {
                     if matches!(
-                        last_spec.partial_cmp(&spec),
+                        last_spec.partial_cmp(spec),
                         Some(Ordering::Less) | Some(Ordering::Equal) | None
                     ) {
                         return Err(FormatError::SpecifiersMustStepDecrease {
@@ -180,18 +174,14 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     // check that this is an ok first spec
                     if !spec.can_be_first() {
                         return Err(FormatError::WrongFirstSpecifier {
-                            spec: spec.to_string(),
+                            first_spec: spec.to_string(),
                             scheme_name: S::name(),
-                            expected_first: S::Specifier::first_variants()
-                                .iter()
-                                .map(|s| s.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", "),
+                            expected_first: S::first_variants_string(),
                         });
                     }
                 }
                 last_spec = Some(spec);
-                tokens.push(FormatToken::Specifier(spec));
+                tokens.push(FormatToken::Specifier(*spec));
                 spec.format_pattern().len()
             } else {
                 // check if its escaped brackets, an unknown/unterminated specifier, or finally,
@@ -236,13 +226,14 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                 // groups later.
                 if let Some(FormatToken::Literal(last_literal)) = tokens.last_mut() {
                     // fast str "concat": we just increase the length of the last literal by the
-                    // size of the new literal. this works because the addition is in contiguous
-                    // memory and we know that the length of the underlying string is at least this
-                    // long.
-                    let ptr = last_literal.as_ptr();
-                    let new_len = last_literal.len() + literal.len();
+                    // size of the new literal. this works because the additional char is in
+                    // contiguous memory and we know that the length of the underlying string is at
+                    // least this long.
                     *last_literal = unsafe {
-                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, new_len))
+                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                            last_literal.as_ptr(),              //same ptr
+                            last_literal.len() + literal.len(), // new len
+                        ))
                     };
                 } else {
                     tokens.push(FormatToken::Literal(literal));
@@ -256,9 +247,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
 
         if let Some(last_spec) = last_spec {
             if !last_spec.can_be_last() {
-                return Err(FormatError::FormatIncomplete {
+                return Err(FormatError::Incomplete {
                     last_spec: last_spec.to_string(),
                     scheme_name: S::name(),
+                    expected_last: S::last_variants_string(),
                 });
             }
         } else {
@@ -269,9 +261,9 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     }
 
     /// Create a new version from this format and a version string.
-    /// 
+    ///
     /// This is equivalent to calling `format.parse_version(version_str)`.
-    pub fn parse_version<'vs>(
+    pub fn new_version<'vs>(
         &self,
         version_str: &'vs str,
     ) -> Result<Version<'vs, S>, VersionError> {
@@ -280,9 +272,12 @@ impl<'fs, S: Scheme> Format<'fs, S> {
 }
 
 impl<'fs, S: Scheme> PartialEq for Format<'fs, S> {
-    /// Returns true if the two formats would have the same string representation.
+    /// Returns true if two formats would have the same string representation.
+    ///
+    /// *Internally, [Format] holds a [OnceCell] of a cached regex, and this is ignored in this
+    /// comparison.*
     // In nightly, clippy currently calling this an `unconditional_recursion`. Almost certainly a
-    // false positive. Bug reports exist.
+    // false positive. Bug reports stating the same.
     fn eq(&self, other: &Self) -> bool {
         self.tokens.eq(&other.tokens)
     }
@@ -312,48 +307,91 @@ impl<'fs, S: Scheme> Display for Format<'fs, S> {
 mod tests {
     use super::*;
     use crate::{
-        scheme::{Cal, CalSem, Scheme, Sem},
-        // specifier::{
-        //     FULL_YEAR, MAJOR, MINOR, PATCH, SHORT_DAY, SHORT_MONTH, SHORT_WEEK, SHORT_YEAR,
-        //     YEAR_FORMAT_STRINGS, ZERO_PADDED_DAY, ZERO_PADDED_MONTH, ZERO_PADDED_WEEK,
-        //     ZERO_PADDED_YEAR,
-        // },
-        specifier::{CalSpecifier, YearType}
+        scheme::{priv_trait::Scheme as _, Cal, CalSem, Scheme, Sem},
+        specifier::{
+            CALSEM_DAY_SHORT, CALSEM_DAY_ZERO_PADDED, CALSEM_MINOR, CALSEM_MONTH_SHORT,
+            CALSEM_MONTH_ZERO_PADDED, CALSEM_PATCH, CALSEM_WEEK_SHORT, CALSEM_WEEK_ZERO_PADDED,
+            CALSEM_YEAR_FULL, CALSEM_YEAR_SHORT, CALSEM_YEAR_ZERO_PADDED, CAL_DAY_SHORT,
+            CAL_DAY_ZERO_PADDED, CAL_MONTH_SHORT, CAL_MONTH_ZERO_PADDED, CAL_WEEK_SHORT,
+            CAL_WEEK_ZERO_PADDED, CAL_YEAR_FULL, CAL_YEAR_SHORT, CAL_YEAR_ZERO_PADDED, SEM_MAJOR,
+            SEM_MINOR, SEM_PATCH,
+        },
     };
     use itertools::Itertools;
     use rstest::*;
     use std::iter;
 
-    // TODO: just like we enumerate all the good possibilities, we should be able to do all the bad
+    #[fixture]
+    fn literal_parts() -> [&'static str; 3] {
+        static LITERAL_PARTS: [&str; 3] = [
+            "the quick brown fox jumps over the lazy dog",
+            "😉",
+            "the end",
+        ];
+        LITERAL_PARTS
+    }
 
-    // a vec of tuples of (specifier, pattern)
-    // while we could just derive the pattern from the specifier, i want this to be an explicit
-    // value so that we can test patterns are what we expect them to be.
-    // type SpecifierTupleVec = Vec<(&'static Specifier, &'static str)>;
+    #[rstest]
+    fn test_sem_literal(literal_parts: [&'static str; 3]) {
+        let [first, middle, last] = literal_parts;
+        let format_str = &format!("{}[MAJOR]{}[MINOR]{}", &first, &middle, &last);
 
-    // #[fixture]
-    // fn years() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
-    //     iter::once(vec![
-    //         (&FULL_YEAR, "[YYYY]"),
-    //         (&SHORT_YEAR, "[YY]"),
-    //         (&ZERO_PADDED_YEAR, "[0Y]"),
-    //     ])
-    // }
+        let sem_format = Sem::new_format(format_str);
+        assert_eq!(
+            Ok(vec![
+                FormatToken::Literal(first),
+                FormatToken::Specifier(&SEM_MAJOR),
+                FormatToken::Literal(middle),
+                FormatToken::Specifier(&SEM_MINOR),
+                FormatToken::Literal(last),
+            ]),
+            sem_format.map(|f| f.tokens)
+        );
+    }
 
-    // #[fixture]
-    // fn months() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
-    //     iter::once(vec![(&SHORT_MONTH, "[MM]"), (&ZERO_PADDED_MONTH, "[0M]")])
-    // }
+    #[rstest]
+    fn test_cal_literal(literal_parts: [&'static str; 3]) {
+        let [first, middle, last] = literal_parts;
+        let format_str = &format!("{}[YYYY]{}[MM]{}", &first, &middle, &last);
 
-    // #[fixture]
-    // fn weeks() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
-    //     iter::once(vec![(&SHORT_WEEK, "[WW]"), (&ZERO_PADDED_WEEK, "[0W]")])
-    // }
+        let sem_format = Cal::new_format(format_str);
+        assert_eq!(
+            Ok(vec![
+                FormatToken::Literal(first),
+                FormatToken::Specifier(&CAL_YEAR_FULL),
+                FormatToken::Literal(middle),
+                FormatToken::Specifier(&CAL_MONTH_SHORT),
+                FormatToken::Literal(last),
+            ]),
+            sem_format.map(|f| f.tokens)
+        );
+    }
 
-    // #[fixture]
-    // fn days() -> impl Iterator<Item = SpecifierTupleVec> + Clone {
-    //     iter::once(vec![(&SHORT_DAY, "[DD]"), (&ZERO_PADDED_DAY, "[0D]")])
-    // }
+    #[rstest]
+    fn test_calsem_literal(literal_parts: [&'static str; 3]) {
+        let [first, middle, last] = literal_parts;
+        let format_str = &format!("{}[YYYY]{}[MINOR]{}", &first, &middle, &last);
+
+        let sem_format = CalSem::new_format(format_str);
+        assert_eq!(
+            Ok(vec![
+                FormatToken::Literal(first),
+                FormatToken::Specifier(&CALSEM_YEAR_FULL),
+                FormatToken::Literal(middle),
+                FormatToken::Specifier(&CALSEM_MINOR),
+                FormatToken::Literal(last),
+            ]),
+            sem_format.map(|f| f.tokens)
+        );
+    }
+
+    /// A vec of tuples of (specifier, pattern). while we could just derive the pattern from the
+    /// specifier, i want this to be an explicit value so that we can test patterns are what we
+    /// expect them to be.
+    // Clippy false positive, possibly just for nightly.
+    // TODO: try to remove `allow` in the future.
+    #[allow(type_alias_bounds)]
+    type SpecifierTupleVec<S: Scheme> = Vec<(&'static S::Specifier, &'static str)>;
 
     /// Returns an iterator of two-tuples of (specifier, pattern) for all valid calendar specifiers.
     ///
@@ -363,109 +401,158 @@ mod tests {
     /// - `[<year>]`, `[<month>]`
     /// - `[<year>]`, `[<month>]`, `[<day>]`
     /// - `[<year>]`, `[<week>]`
+    #[fixture]
+    fn all_valid_cal_specs_product() -> impl Iterator<Item = SpecifierTupleVec<Cal>> {
+        let years = iter::once(vec![
+            (&CAL_YEAR_FULL, "[YYYY]"),
+            (&CAL_YEAR_SHORT, "[YY]"),
+            (&CAL_YEAR_ZERO_PADDED, "[0Y]"),
+        ]);
+        let months = iter::once(vec![
+            (&CAL_MONTH_SHORT, "[MM]"),
+            (&CAL_MONTH_ZERO_PADDED, "[0M]"),
+        ]);
+        let weeks = iter::once(vec![
+            (&CAL_WEEK_SHORT, "[WW]"),
+            (&CAL_WEEK_ZERO_PADDED, "[0W]"),
+        ]);
+        let days = iter::once(vec![
+            (&CAL_DAY_SHORT, "[DD]"),
+            (&CAL_DAY_ZERO_PADDED, "[0D]"),
+        ]);
+
+        let years_product = years.clone().multi_cartesian_product();
+        let years_months_product = years
+            .clone()
+            .chain(months.clone())
+            .multi_cartesian_product();
+        let years_months_days_product = years
+            .clone()
+            .chain(months)
+            .chain(days)
+            .multi_cartesian_product();
+        let years_weeks_product = years.chain(weeks).multi_cartesian_product();
+
+        years_product
+            .chain(years_months_product)
+            .chain(years_months_days_product)
+            .chain(years_weeks_product)
+    }
+
+    /// Returns an iterator of two-tuples of (specifier, pattern) for all valid calendar specifiers.
     ///
-    /// E.g., eliding the specifiers:
+    /// These are:
     ///
-    /// - `[YYYY]`
-    /// - `[YY]`
-    /// - `[0Y]`
-    /// - `[YYYY]`, `[MM]`
-    /// - `[YYYY]`, `[0M]`
-    /// - `[YY]`, `[MM]`
-    /// - `[YY]`, `[0M]`
-    /// - `[0Y]`, `[MM]`
-    /// - `[0Y]`, `[0M]`
-    /// - `[YYYY]`, `[MM]`, `[DD]`
-    /// - `[YYYY]`, `[MM]`, `[0D]`
-    /// and so on.
-    // #[fixture]
-    // fn all_calendar_specs_product(
-    //     years: impl Iterator<Item = SpecifierTupleVec> + Clone,
-    //     months: impl Iterator<Item = SpecifierTupleVec> + Clone,
-    //     weeks: impl Iterator<Item = SpecifierTupleVec> + Clone,
-    //     days: impl Iterator<Item = SpecifierTupleVec> + Clone,
-    // ) -> impl Iterator<Item = SpecifierTupleVec> {
-    //     let years_product = years.clone().multi_cartesian_product();
-    //     let years_months_product = years
-    //         .clone()
-    //         .chain(months.clone())
-    //         .multi_cartesian_product();
-    //     let years_months_days_product = years
-    //         .clone()
-    //         .chain(months)
-    //         .chain(days)
-    //         .multi_cartesian_product();
-    //     let years_weeks_product = years.chain(weeks).multi_cartesian_product();
+    /// - `[<year>]`, REST
+    /// - `[<year>]`, `[<month>]`, REST
+    /// - `[<year>]`, `[<month>]`, `[<day>]`, REST
+    /// - `[<year>]`, `[<week>]`, REST
+    ///
+    /// where REST is:
+    ///
+    /// - `[MINOR]`
+    /// - `[MINOR]`, `[PATCH]`
+    /// - `[PATCH]`
+    #[fixture]
+    fn all_valid_calsem_specs_product() -> impl Iterator<Item = SpecifierTupleVec<CalSem>> {
+        let years = iter::once(vec![
+            (&CALSEM_YEAR_FULL, "[YYYY]"),
+            (&CALSEM_YEAR_SHORT, "[YY]"),
+            (&CALSEM_YEAR_ZERO_PADDED, "[0Y]"),
+        ]);
+        let months = iter::once(vec![
+            (&CALSEM_MONTH_SHORT, "[MM]"),
+            (&CALSEM_MONTH_ZERO_PADDED, "[0M]"),
+        ]);
+        let weeks = iter::once(vec![
+            (&CALSEM_WEEK_SHORT, "[WW]"),
+            (&CALSEM_WEEK_ZERO_PADDED, "[0W]"),
+        ]);
+        let days = iter::once(vec![
+            (&CALSEM_DAY_SHORT, "[DD]"),
+            (&CALSEM_DAY_ZERO_PADDED, "[0D]"),
+        ]);
 
-    //     years_product
-    //         .chain(years_months_product)
-    //         .chain(years_months_days_product)
-    //         .chain(years_weeks_product)
-    // }
+        let years_product = years.clone().multi_cartesian_product();
+        let years_months_product = years
+            .clone()
+            .chain(months.clone())
+            .multi_cartesian_product();
+        let years_months_days_product = years
+            .clone()
+            .chain(months)
+            .chain(days)
+            .multi_cartesian_product();
+        let years_weeks_product = years.chain(weeks).multi_cartesian_product();
 
-    // #[test]
-    // fn test_literal() {
-    //     let literal_front = "the quick brown fox jumps over the lazy dog";
-    //     let literal_middle = "😉";
-    //     let literal_back = "the end";
-    //     let format_string = format!("{literal_front}[MAJOR]{literal_middle}[MINOR]{literal_back}");
-    //     let format = Sem::new_format(&format_string);
-    //     assert_eq!(
-    //         Ok(vec![
-    //             FormatToken::Literal(literal_front),
-    //             FormatToken::Specifier(&MAJOR),
-    //             FormatToken::Literal(literal_middle),
-    //             FormatToken::Specifier(&MINOR),
-    //             FormatToken::Literal(literal_back),
-    //         ]),
-    //         format.map(|f| f.tokens)
-    //     );
-    // }
+        years_product
+            .chain(years_months_product)
+            .chain(years_months_days_product)
+            .chain(years_weeks_product)
+            // augment each of these products with the three possible semantic suffix combinations
+            .flat_map(|iter| {
+                vec![
+                    [iter.clone(), vec![(&CALSEM_MINOR, "[MINOR]")]].concat(),
+                    [
+                        iter.clone(),
+                        vec![(&CALSEM_MINOR, "[MINOR]")],
+                        vec![(&CALSEM_PATCH, "[PATCH]")],
+                    ]
+                    .concat(),
+                    [iter, vec![(&CALSEM_PATCH, "[PATCH]")]].concat(),
+                ]
+            })
+    }
 
-    /// test all semantic formats. these are:
+    /// test all semantic format sequences parse ok. these are:
     ///
     /// - `[MAJOR]`
     /// - `[MAJOR]`, `[MINOR]`
     /// - `[MAJOR]`, `[MINOR]`, `[PATCH]`
-    // #[test]
-    // fn test_semantic_parse_ok() {
-    //     let args = [
-    //         ("[MAJOR][MINOR][PATCH]", vec![&MAJOR, &MINOR, &PATCH]),
-    //         ("[MAJOR][MINOR]", vec![&MAJOR, &MINOR]),
-    //         ("[MAJOR]", vec![&MAJOR]),
-    //     ];
+    #[test]
+    fn test_sem_parse_ok() {
+        let args = [
+            (
+                "[MAJOR][MINOR][PATCH]",
+                vec![&SEM_MAJOR, &SEM_MINOR, &SEM_PATCH],
+            ),
+            ("[MAJOR][MINOR]", vec![&SEM_MAJOR, &SEM_MINOR]),
+            ("[MAJOR]", vec![&SEM_MAJOR]),
+        ];
 
-    //     for (format_string, spec) in args {
-    //         let tokens = spec
-    //             .iter()
-    //             .map(|spec| FormatToken::Specifier(spec))
-    //             .collect();
-    //         let actual = Sem::new_format(format_string);
-    //         assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
-    //     }
-    // }
+        for (format_string, spec) in args {
+            let tokens = spec
+                .iter()
+                .map(|spec| FormatToken::Specifier(*spec))
+                .collect();
+            let actual = Sem::new_format(format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    /// test all calendar formats. these are:
+    /// test all calendar format sequences parse ok. these are:
     ///
     /// - `[<year>]`
     /// - `[<year>]`, `[<month>]`
     /// - `[<year>]`, `[<month>]`, `[<day>]`
     /// - `[<year>]`, `[<week>]`
-    // #[rstest]
-    // fn test_calendar_parse_ok(all_calendar_specs_product: impl Iterator<Item = SpecifierTupleVec>) {
-    //     for spec_sequence in all_calendar_specs_product {
-    //         let mut format_string = String::new();
-    //         let mut tokens = vec![];
-    //         for (spec, pattern) in spec_sequence {
-    //             format_string.push_str(pattern);
-    //             tokens.push(FormatToken::Specifier(spec));
-    //         }
-    //         let actual = Cal::new_format(&format_string);
-    //         assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
-    //     }
-    // }
+    #[rstest]
+    fn test_cal_parse_ok(
+        all_valid_cal_specs_product: impl Iterator<Item = SpecifierTupleVec<Cal>>,
+    ) {
+        for spec_sequence in all_valid_cal_specs_product {
+            let mut format_string = String::new();
+            let mut tokens = vec![];
+            for (spec, pattern) in spec_sequence {
+                format_string.push_str(pattern);
+                tokens.push(FormatToken::Specifier(spec));
+            }
+            let actual = Cal::new_format(&format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    /// test all calendar-semantic formats. these are:
+    /// test all calendar-semantic format sequences parse ok. these are:
     ///
     /// - `[<year>]`, `[MINOR]`
     /// - `[<year>]`, `[MINOR]`, `[PATCH]`
@@ -479,169 +566,182 @@ mod tests {
     /// - `[<year>]`, `[<week>]`, `[MINOR]`
     /// - `[<year>]`, `[<week>]`, `[MINOR]`, `[PATCH]`
     /// - `[<year>]`, `[<week>]`, `[PATCH]`
-    // #[rstest]
-    // fn test_calendar_semantic_parse_ok(
-    //     all_calendar_specs_product: impl Iterator<Item = SpecifierTupleVec>,
-    // ) {
-    //     let all_with_semantic_suffixes = all_calendar_specs_product.flat_map(|i| {
-    //         vec![
-    //             [i.clone(), vec![(&MINOR, "[MINOR]")]].concat(),
-    //             [
-    //                 i.clone(),
-    //                 vec![(&MINOR, "[MINOR]")],
-    //                 vec![(&PATCH, "[PATCH]")],
-    //             ]
-    //             .concat(),
-    //             [i, vec![(&PATCH, "[PATCH]")]].concat(),
-    //         ]
-    //     });
+    #[rstest]
+    fn test_calsem_parse_ok(
+        all_valid_calsem_specs_product: impl Iterator<Item = SpecifierTupleVec<CalSem>>,
+    ) {
+        for spec_sequence in all_valid_calsem_specs_product {
+            let mut format_string = String::new();
+            let mut tokens = vec![];
+            for (spec, pattern) in spec_sequence {
+                format_string.push_str(pattern);
+                tokens.push(FormatToken::Specifier(spec));
+            }
+            let actual = CalSem::new_format(&format_string);
+            assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
+        }
+    }
 
-    //     for spec_sequence in all_with_semantic_suffixes {
-    //         let mut format_string = String::new();
-    //         let mut tokens = vec![];
-    //         for (spec, pattern) in spec_sequence {
-    //             format_string.push_str(pattern);
-    //             tokens.push(FormatToken::Specifier(spec));
-    //         }
-    //         let actual = CalSem::new_format(&format_string);
-    //         assert_eq!(Ok(tokens), actual.map(|f| f.tokens));
-    //     }
-    // }
+    #[test]
+    fn test_bad_sem_format() {
+        use crate::error::FormatError::*;
 
-    // #[test]
-    // fn test_bad_semantic_format() {
-    //     use NextverError::*;
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[MINOR]",
+                WrongFirstSpecifier {
+                    first_spec: SEM_MINOR.to_string(),
+                    scheme_name: Sem::name(),
+                    expected_first: Sem::first_variants_string(),
+                },
+            ),
+            (
+                "[MAJOR][MAJOR]",
+                SpecifiersMustStepDecrease {
+                    prev: SEM_MAJOR.to_string(),
+                    next: SEM_MAJOR.to_string(),
+                },
+            ),
+            (
+                "[MAJOR][PATCH]",
+                SpecifiersMustStepDecrease {
+                    prev: SEM_MAJOR.to_string(),
+                    next: SEM_PATCH.to_string(),
+                },
+            ),
+            (
+                "[MAJOR][YYYY]",
+                UnacceptableSpecifier {
+                    spec: "[YYYY]".to_string(),
+                    scheme_name: Sem::name(),
+                },
+            ),
+            (
+                "[MAJOR",
+                UnterminatedSpecifier {
+                    pattern: "[MAJOR".to_string(),
+                },
+            ),
+        ];
 
-    //     // not exhaustive, just a sample
-    //     let args = [
-    //         ("", NoSpecifiersInFormat),
-    //         ("foo", NoSpecifiersInFormat),
-    //         (
-    //             "[MINOR]",
-    //             WrongFirstSpecifier {
-    //                 spec: &MINOR,
-    //                 scheme_name: Sem::name(),
-    //                 expected_first: "[MAJOR]",
-    //             },
-    //         ),
-    //         (
-    //             "[MAJOR][MAJOR]",
-    //             SpecifiersMustStrictlyDecrease {
-    //                 prev: &MAJOR,
-    //                 next: &MAJOR,
-    //             },
-    //         ),
-    //         (
-    //             "[MAJOR][PATCH]",
-    //             SpecifierMustBeRelative {
-    //                 prev: &MAJOR,
-    //                 next: &PATCH,
-    //             },
-    //         ),
-    //         (
-    //             "[MAJOR][YYYY]",
-    //             UnacceptableSpecifier {
-    //                 spec: &FULL_YEAR,
-    //                 scheme_name: Sem::name(),
-    //             },
-    //         ),
-    //     ];
+        for (format, err) in args {
+            let actual = Sem::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
 
-    //     for (format, err) in args {
-    //         let actual = Sem::new_format(format);
-    //         assert_eq!(Err(err), actual);
-    //     }
-    // }
+    #[test]
+    fn test_bad_cal_format() {
+        use crate::error::FormatError::*;
 
-    // #[test]
-    // fn test_bad_calendar_format() {
-    //     use NextverError::*;
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[MM]",
+                WrongFirstSpecifier {
+                    first_spec: CAL_MONTH_SHORT.to_string(),
+                    scheme_name: Cal::name(),
+                    expected_first: Cal::first_variants_string(),
+                },
+            ),
+            (
+                "[YYYY][MINOR]",
+                UnacceptableSpecifier {
+                    spec: "[MINOR]".to_string(),
+                    scheme_name: Cal::name(),
+                },
+            ),
+            (
+                "[YYYY][MM][WW]",
+                SpecifiersMustStepDecrease {
+                    prev: CAL_MONTH_SHORT.to_string(),
+                    next: CAL_WEEK_SHORT.to_string(),
+                },
+            ),
+            (
+                "[YYYY][DD]",
+                SpecifiersMustStepDecrease {
+                    prev: CAL_YEAR_FULL.to_string(),
+                    next: CAL_DAY_SHORT.to_string(),
+                },
+            ),
+            (
+                "[YYYY",
+                UnterminatedSpecifier {
+                    pattern: "[YYYY".to_string(),
+                },
+            ),
+        ];
 
-    //     // not exhaustive, just a sample
-    //     let args = [
-    //         ("", NoSpecifiersInFormat),
-    //         ("foo", NoSpecifiersInFormat),
-    //         (
-    //             "[YYYY][MINOR]",
-    //             UnacceptableSpecifier {
-    //                 spec: &MINOR,
-    //                 scheme_name: Cal::name(),
-    //             },
-    //         ),
-    //         (
-    //             "[YYYY][MM][WW]",
-    //             SpecifierMustBeRelative {
-    //                 prev: &SHORT_MONTH,
-    //                 next: &SHORT_WEEK,
-    //             },
-    //         ),
-    //         (
-    //             "[YYYY][DD]",
-    //             SpecifiersMustStrictlyDecrease {
-    //                 prev: &FULL_YEAR,
-    //                 next: &SHORT_DAY,
-    //             },
-    //         ),
-    //         (
-    //             "[MM]",
-    //             WrongFirstSpecifier {
-    //                 spec: &SHORT_MONTH,
-    //                 scheme_name: Cal::name(),
-    //                 expected_first: &YEAR_FORMAT_STRINGS,
-    //             },
-    //         ),
-    //     ];
+        for (format, err) in args {
+            let actual = Cal::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
 
-    //     for (format, err) in args {
-    //         let actual = Cal::new_format(format);
-    //         assert_eq!(Err(err), actual);
-    //     }
-    // }
+    #[test]
+    fn test_bad_calendar_semantic_format() {
+        use crate::error::FormatError::*;
 
-    // #[test]
-    // fn test_bad_calendar_semantic_format() {
-    //     use NextverError::*;
+        // not exhaustive, just a sample
+        let args = [
+            ("", NoSpecifiersInFormat),
+            ("foo", NoSpecifiersInFormat),
+            (
+                "[YYYY",
+                UnterminatedSpecifier {
+                    pattern: "[YYYY".to_string(),
+                },
+            ),
+            (
+                "[YYYY][FOO]",
+                UnacceptableSpecifier {
+                    spec: "[FOO]".to_string(),
+                    scheme_name: CalSem::name(),
+                },
+            ),
+            (
+                "[YYYY]",
+                Incomplete {
+                    last_spec: CALSEM_YEAR_FULL.to_string(),
+                    scheme_name: CalSem::name(),
+                    expected_last: CalSem::last_variants_string(),
+                },
+            ),
+            (
+                "[MM]",
+                WrongFirstSpecifier {
+                    first_spec: CAL_MONTH_SHORT.to_string(),
+                    scheme_name: CalSem::name(),
+                    expected_first: CalSem::first_variants_string(),
+                },
+            ),
+            (
+                "[YYYY][MM][WW][PATCH]",
+                SpecifiersMustStepDecrease {
+                    prev: CALSEM_MONTH_SHORT.to_string(),
+                    next: CALSEM_WEEK_SHORT.to_string(),
+                },
+            ),
+            (
+                "[YYYY][DD][MINOR]",
+                SpecifiersMustStepDecrease {
+                    prev: CALSEM_YEAR_FULL.to_string(),
+                    next: CAL_DAY_SHORT.to_string(),
+                },
+            ),
+        ];
 
-    //     // not exhaustive, just a sample
-    //     let args = [
-    //         ("", NoSpecifiersInFormat),
-    //         ("foo", NoSpecifiersInFormat),
-    //         (
-    //             "[YYYY]",
-    //             FormatIncomplete {
-    //                 last_spec: &FULL_YEAR,
-    //             },
-    //         ),
-    //         ("[YYYY][MAJOR]", MajorInCalSemFormat),
-    //         (
-    //             "[MM]",
-    //             WrongFirstSpecifier {
-    //                 spec: &SHORT_MONTH,
-    //                 scheme_name: CalSem::name(),
-    //                 expected_first: &YEAR_FORMAT_STRINGS,
-    //             },
-    //         ),
-    //         (
-    //             "[YYYY][MM][WW][PATCH]",
-    //             SpecifierMustBeRelative {
-    //                 prev: &SHORT_MONTH,
-    //                 next: &SHORT_WEEK,
-    //             },
-    //         ),
-    //         (
-    //             "[YYYY][DD][MINOR]",
-    //             SpecifierMustBeRelative {
-    //                 prev: &FULL_YEAR,
-    //                 next: &SHORT_DAY,
-    //             },
-    //         ),
-    //     ];
-
-    //     for (format, err) in args {
-    //         let actual = CalSem::new_format(format);
-    //         assert_eq!(Err(err), actual);
-    //     }
-    // }
+        for (format, err) in args {
+            let actual = CalSem::new_format(format);
+            assert_eq!(Err(err), actual);
+        }
+    }
 
     #[test]
     fn test_bracket_escape() {
@@ -649,7 +749,7 @@ mod tests {
         let actual = Cal::new_format(format);
         assert_eq!(
             Ok(vec![
-                FormatToken::Specifier(CalSpecifier::Year(YearType::Full)),
+                FormatToken::Specifier(&CAL_YEAR_FULL),
                 FormatToken::Literal("[YYYY]"),
             ])
             .as_ref(),
@@ -657,28 +757,5 @@ mod tests {
         );
         let round_tripped_format = actual.unwrap().to_string();
         assert_eq!(format, round_tripped_format);
-    }
-
-    #[test]
-    fn test_unknown_specifier() {
-        let formats = ["[foo]", "[]", "[]]"];
-        for format in formats {
-            let actual = Sem::new_format(format);
-            assert!(matches!(actual, Err(FormatError::UnacceptableSpecifier { .. })));
-        }
-    }
-
-    #[test]
-    fn test_unterminated_specifier() {
-        let formats = ["[foo", "[", "[major"];
-        for format in formats {
-            let actual = Sem::new_format(format);
-            assert_eq!(
-                actual,
-                Err(FormatError::UnterminatedSpecifier {
-                    pattern: format.to_owned(),
-                })
-            )
-        }
     }
 }

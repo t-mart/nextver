@@ -9,7 +9,7 @@
 //! ## Examples
 //!
 //! *Below, the text in `[brackets]` is a specifier. See what they mean [here](#table).*
-//! 
+//!
 //! Quickly get a next version:
 //!
 //! ```
@@ -20,34 +20,34 @@
 //!   "1.2.3",                    // current version string
 //!   &SemanticSpecifier::Minor   // the specifier to increment
 //! ).unwrap();
-//! assert_eq!(next.to_string(), "1.3.0");
+//! assert_eq!(next, "1.3.0");
 //!
 //! let next = CalSem::next(
-//!   "[YYYY].[MM]-[PATCH]",       // format string
-//!   "2023.12-42",                // current version string
-//!   &Date::Explicit(2024, 1, 2), // the date to update to, or simply `Date::UtcNow`/`Date::LocalNow`
-//!   &CalSemSpecifier::Patch      // the specifier to increment, if no calendar update would occur
+//!   "[YYYY].[0M]-[PATCH]",          // format string
+//!   "2023.12-42",                   // current version string
+//!   &"2024-01-02".parse().unwrap(), // the date to update to, or simply `Date::UtcNow`/`Date::LocalNow`
+//!   &CalSemSpecifier::Patch         // the specifier to increment, if no calendar update would occur
 //! ).unwrap();
-//! assert_eq!(next.to_string(), "2024.01-0");
+//! assert_eq!(next, "2024.01-0");
 //! ```
-//! 
-//! 
+//!
+//!
 //! Or, break down the steps for reusability:
 //!
 //! ```
 //! use nextver::prelude::*;
 //!
 //! let format = CalSem::new_format("[YYYY].[MM].[PATCH]").unwrap();
-//! let version = Version::parse("2023.12.42", &format).unwrap();
-//! let next = version.next(&Date::Explicit(2024, 1, 2), &CalSemSpecifier::Patch).unwrap();
+//! let version = format.parse_version("2023.12.42").unwrap();
+//! let next = version.next(&"2024-01-02".parse().unwrap(), &CalSemSpecifier::Patch).unwrap();
 //! assert!(next > version);
 //! ```
 //!
 //! ## Important Terms
 //!
-//! - **Version**: A string that represents a specific point in a project's development.  It's
-//!   modeled by the [`Version`] struct. Versions can be incremented to new ones and compared
-//!   amongst each other.
+//! - **Version**: A string that represents a specific point in a project's development, comprised
+//!   of *values* and *literal text*. It's modeled by the [`Version`] struct. Versions can be
+//!   incremented to new ones and compared amongst each other.
 //! - **Format**: A string that defines the structure of a version string. It contains a sequence of
 //!   *specifiers* and *literal text*. It's modeled by the [`Format`] struct.
 //! - **Specifier**: A pattern in a format that dictates how to interpret and format its respective
@@ -66,6 +66,7 @@
 //! - [`Cal`]: Only calendar specifiers. This one is probably less useful because there is no way to
 //!   increment it twice in the same period of its least significant specifier. For example, a
 //!   version with format `[YYYY].[MM].[DD]` can only be incremented/updated once per day.
+//!
 //!
 //! ## Specifiers
 //!
@@ -127,7 +128,17 @@
 //! // or use raw strings to just use one backslash
 //! let format = Sem::new_format(r"[MAJOR]-\[literal-text]");
 //! ```
-#![feature(lazy_cell)]
+//!
+//! ## Prelude
+//!
+//! nextver provides a prelude module for convenience. It contains everything needed to interact
+//! with the library.
+//!
+//! Use it with:
+//!
+//! ```
+//! use nextver::prelude::*;
+//! ```
 #![warn(missing_docs)]
 
 mod error;
@@ -136,7 +147,7 @@ mod scheme;
 mod specifier;
 mod version;
 
-pub use crate::error::{FormatError, CompositeError, VersionError};
+pub use crate::error::{CompositeError, DateError, FormatError, VersionError};
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
 pub use crate::specifier::{CalSemIncrSpecifier, SemSpecifier};
@@ -151,13 +162,15 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::CalSemIncrSpecifier;
     #[doc(no_inline)]
+    pub use crate::CompositeError;
+    #[doc(no_inline)]
     pub use crate::Date;
+    #[doc(no_inline)]
+    pub use crate::DateError;
     #[doc(no_inline)]
     pub use crate::Format;
     #[doc(no_inline)]
     pub use crate::FormatError;
-    #[doc(no_inline)]
-    pub use crate::CompositeError;
     #[doc(no_inline)]
     pub use crate::Scheme;
     #[doc(no_inline)]
@@ -170,7 +183,7 @@ pub mod prelude {
     pub use crate::VersionError;
 }
 
-
-// TODO: take a look at how chrono does string -> time and time -> string with strftime and strptime
-// we're kinda doing the same thing, and that API is prolly good, and its implementation. also take
-// note of how it names things and its architecture. they don't even use regex over there. see how
+// TODO: consider dropping regex dependency. Chrono, for example doesn't need it, and it does the
+// same kind of parsing that we do. However, there's a lot of code they maintain to do it. Is there
+// possibly some more target crate (we only use a subset of regex) that might have better
+// performance? Maybe regex_automata?

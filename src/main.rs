@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use clap::{arg, command, Parser, Subcommand, ValueEnum};
 use nextver::prelude::*;
 
@@ -5,6 +7,9 @@ use nextver::prelude::*;
 enum NextVerCliError {
     #[error("{0}")]
     LibraryCompositeError(#[from] CompositeError),
+
+    #[error("{0}")]
+    LibraryFormatError(#[from] FormatError),
 
     #[error("{0}")]
     LibraryVersionError(#[from] VersionError),
@@ -84,11 +89,11 @@ fn next(
     };
 
     let next_version = match scheme {
-        SchemeArg::Sem => Sem::next(format_str, version_str, &sem_spec()?)?,
+        SchemeArg::Sem => Sem::next_string(format_str, version_str, &sem_spec()?)?,
 
-        SchemeArg::Cal => Cal::next(format_str, version_str, date)?,
+        SchemeArg::Cal => Cal::next_string(format_str, version_str, date)?,
 
-        SchemeArg::CalSem => CalSem::next(format_str, version_str, date, &cal_sem_spec()?)?,
+        SchemeArg::CalSem => CalSem::next_string(format_str, version_str, date, &cal_sem_spec()?)?,
 
         SchemeArg::Guess => {
             if let Ok(sem_ver) = Sem::new_version(format_str, version_str) {
@@ -139,41 +144,22 @@ const UNPARSEABLE_DATE_ERROR: &str = "Could not parse provided date as `utc`, `l
 
 fn parse_date(s: &str) -> Result<Date, &'static str> {
     match s {
-        "utc" => Ok(Date::UtcNow),
-        "local" => Ok(Date::LocalNow),
-        _ => {
-            let parts = s.splitn(3, '-').collect::<Vec<_>>();
-            if parts.len() < 3 {
-                return Err(UNPARSEABLE_DATE_ERROR);
-            }
-            let year = parts[0]
-                .parse::<i32>()
-                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
-            let month = parts[1]
-                .parse::<u32>()
-                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
-            let day = parts[2]
-                .parse::<u32>()
-                .map_err(|_| UNPARSEABLE_DATE_ERROR)?;
-
-            Ok(Date::Explicit(year, month, day))
-        }
+        "utc" => Ok(Date::utc_now()),
+        "local" => Ok(Date::local_now()),
+        ymd => Ok(Date::from_str(ymd).map_err(|_| UNPARSEABLE_DATE_ERROR)?),
     }
 }
-
-// TODO: somehow figure out how to augment the help subcommand to add a section `format`, which
-// describes the format specifiers.
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Option<Subcommands>,
 }
 
 #[derive(Subcommand, Debug)]
 #[command(arg_required_else_help(true))]
-enum Commands {
+enum Subcommands {
     /// Validates that a version matches a format
     Valid {
         /// The version string to validate as matching a format
@@ -263,12 +249,12 @@ fn main() -> std::process::ExitCode {
 
 fn run(cli: Cli) -> Result<Output, NextVerCliError> {
     match cli.command {
-        Some(Commands::Valid {
+        Some(Subcommands::Valid {
             format: format_str,
             version: version_str,
             scheme,
         }) => validate(&scheme, &format_str, &version_str),
-        Some(Commands::Next {
+        Some(Subcommands::Next {
             format,
             version,
             sem_level: level,

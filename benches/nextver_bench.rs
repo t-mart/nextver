@@ -1,89 +1,97 @@
-use std::time::Duration;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use nextver::prelude::*;
 
-fn format_sem_inputs() -> Vec<&'static str> {
-    vec!["[MAJOR].[MINOR].[PATCH]", "[MAJOR].[MINOR]", "[MAJOR]"]
-}
-
-fn format_sem(inputs: &[&str]) {
-    for input in inputs {
-        let res = Sem::new_format(input);
-        assert!(res.is_ok());
-    }
-}
-
-fn format_cal_inputs() -> Vec<&'static str> {
-    vec!["[YYYY].[MM].[DD]", "[YYYY].[MM]", "[YYYY]"]
-}
-
-fn format_cal(inputs: &[&str]) {
-    for input in inputs {
-        let res = Cal::new_format(input);
-        assert!(res.is_ok());
-    }
-}
-
-fn format_calsem_inputs() -> Vec<&'static str> {
-    vec![
-        "[YYYY].[MM].[MINOR].[PATCH]",
-        "[YYYY].[MM].[MINOR]",
-        "[YYYY].[MM].[DD].[MINOR].[PATCH]",
-        "[YYYY].[MM].[DD].[MINOR]",
-        "[YYYY].[WW].[MINOR].[PATCH]",
-        "[YYYY].[WW].[MINOR]",
-    ]
-}
-
-fn format_calsem(inputs: &[&str]) {
-    for input in inputs {
-        let res = CalSem::new_format(input);
-        assert!(res.is_ok());
-    }
-}
-
-fn version_calsem_inputs() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("[YYYY].[MM].[MINOR].[PATCH]", "2020.1.1.1263"),
-        ("[YY].[MM].[MINOR]", "20.1.633"),
-        ("[0Y].[0M].[DD].[MINOR]", "09.01.23.352"),
-        ("[YYYY].[0W].[MINOR].[PATCH]", "2020.01.2341.35"),
-        ("[YY].[WW].[MINOR]", "20.5.22345"),
-    ]
-}
-
-fn version_calsem(inputs: &[(&str, &str)]) {
-    for (format_str, version_str) in inputs {
-        let res = CalSem::new_version(format_str, version_str);
-        assert!(res.is_ok());
-    }
-}
-
-fn format_benchmark(c: &mut Criterion) {
-    c.bench_function("format_sem", |b| {
-        b.iter(|| format_sem(black_box(&format_sem_inputs())))
-    });
-    c.bench_function("format_cal", |b| {
-        b.iter(|| format_cal(black_box(&format_cal_inputs())))
-    });
-    c.bench_function("format_calsem", |b| {
-        b.iter(|| format_calsem(black_box(&format_calsem_inputs())))
+fn bench_format_sem(c: &mut Criterion) {
+    let format_str = "[MAJOR].[MINOR].[PATCH]";
+    c.bench_function("bench_format_sem", |b| {
+        b.iter(|| Sem::new_format(black_box(format_str)).unwrap())
     });
 }
 
-fn version_benchmark(c: &mut Criterion) {
-    c.bench_function("version_calsem", |b| {
-        b.iter(|| version_calsem(black_box(&version_calsem_inputs())))
+fn bench_format_cal(c: &mut Criterion) {
+    let format_str = "[YYYY].[MM].[DD]";
+    c.bench_function("bench_format_cal", |b| {
+        b.iter(|| Cal::new_format(black_box(format_str)).unwrap())
     });
 }
 
-criterion_group!{
-    name = benches;
-    // give us more warmup time. my computer seems to do better with more warmup time
-    config = Criterion::default().warm_up_time(Duration::from_secs(7));
-    targets = format_benchmark, version_benchmark
+fn bench_format_calsem(c: &mut Criterion) {
+    let format_str = "[YYYY].[MM].[DD]-[MINOR].[PATCH]";
+    c.bench_function("bench_format_calsem", |b| {
+        b.iter(|| CalSem::new_format(black_box(format_str)).unwrap())
+    });
 }
+
+fn bench_format_sem_large_literal(c: &mut Criterion) {
+    let format_str = "Tell me, Muse, of the man of many ways, who was driven[MAJOR]far journeys, after he had sacked Troy's sacred citadel.[MINOR]\"The Odyssey\" by Homer[PATCH]👯‍♀️";
+    c.bench_function("bench_format_sem_large_literal", |b| {
+        b.iter(|| Sem::new_format(black_box(format_str)).unwrap())
+    });
+}
+
+fn bench_version_sem(c: &mut Criterion) {
+    let format_str = "[MAJOR].[MINOR].[PATCH]";
+    let version_str = "5.0.12390";
+    c.bench_function("bench_version_sem", |b| {
+        b.iter(|| Sem::new_version(black_box(format_str), version_str).unwrap())
+    });
+}
+
+fn bench_version_cal(c: &mut Criterion) {
+    let format_str = "[YYYY].[WW]";
+    let version_str = "2020.47";
+    c.bench_function("bench_version_cal", |b| {
+        b.iter(|| Cal::new_version(black_box(format_str), version_str).unwrap())
+    });
+}
+
+fn bench_version_calsem(c: &mut Criterion) {
+    let format_str = "[YYYY].[MM].[DD]-[MINOR].[PATCH]";
+    let version_str = "2020.10.27-1.1263";
+    c.bench_function("bench_version_calsem", |b| {
+        b.iter(|| CalSem::new_version(black_box(format_str), version_str).unwrap())
+    });
+}
+
+fn bench_next_sem(c: &mut Criterion) {
+    let format_str = "[MAJOR].[MINOR].[PATCH]";
+    let version_str = "5.0.12390";
+    let spec = SemSpecifier::Minor;
+    c.bench_function("bench_next_sem", |b| {
+        b.iter(|| Sem::next_string(black_box(format_str), version_str, &spec).unwrap())
+    });
+}
+
+fn bench_next_cal(c: &mut Criterion) {
+    let format_str = "[YYYY].[WW]";
+    let version_str = "2020.47";
+    let date = Date::explicit(2024, 1, 27).unwrap();
+    c.bench_function("bench_next_cal", |b| {
+        b.iter(|| Cal::next_string(black_box(format_str), version_str, &date).unwrap())
+    });
+}
+
+fn bench_next_calsem(c: &mut Criterion) {
+    let format_str = "[YYYY].[MM].[DD]-[MINOR].[PATCH]";
+    let version_str = "2020.10.27-1.1263";
+    let date = Date::explicit(2024, 1, 27).unwrap();
+    let spec = CalSemIncrSpecifier::Minor;
+    c.bench_function("bench_next_calsem", |b| {
+        b.iter(|| CalSem::next_string(black_box(format_str), version_str, &date, &spec).unwrap())
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_format_sem,
+    bench_format_cal,
+    bench_format_calsem,
+    bench_format_sem_large_literal,
+    bench_version_sem,
+    bench_version_cal,
+    bench_version_calsem,
+    bench_next_sem,
+    bench_next_cal,
+    bench_next_calsem
+);
 criterion_main!(benches);
-
-// TODO: look at how chrono does their criterion benchmarking. our structure could be improved.
