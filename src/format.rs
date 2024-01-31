@@ -128,13 +128,21 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     /// Get the regex pattern for this format. Caches the regex if it hasn't been created yet.
     pub(crate) fn get_regex(&self) -> &Regex {
         self.regex.get_or_init(|| {
-            let tokens_subpattern = self
-                .tokens
-                .iter()
-                .map(FormatToken::version_pattern_group)
-                .collect::<Vec<_>>()
-                .join("");
-            let pattern = format!("^{tokens_subpattern}$");
+            let mut str_cap = 0usize;
+            let mut tokens = Vec::with_capacity(self.tokens.len());
+            tokens.extend(self.tokens.iter().map(|token| {
+                let pattern = token.version_pattern_group();
+                str_cap += pattern.len();
+                pattern
+            }));
+
+            // +2 for ^ and $
+            let mut pattern = String::with_capacity(str_cap + 2);
+            pattern.push('^');
+            for token in tokens {
+                pattern.push_str(&token);
+            }
+            pattern.push('$');
             Regex::new(&pattern).unwrap()
         })
     }
@@ -263,10 +271,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     /// Create a new version from this format and a version string.
     ///
     /// This is equivalent to calling `format.parse_version(version_str)`.
-    pub fn new_version<'vs>(
-        &self,
-        version_str: &'vs str,
-    ) -> Result<Version<'vs, S>, VersionError> {
+    pub fn new_version<'vs>(&self, version_str: &'vs str) -> Result<Version<'vs, S>, VersionError> {
         Version::parse(version_str, self)
     }
 }
