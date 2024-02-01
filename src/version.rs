@@ -511,8 +511,6 @@ impl<'vs, S: Scheme> Display for Version<'vs, S> {
 
 #[cfg(test)]
 mod tests {
-    // use chrono::format;
-
     use super::*;
 
     #[test]

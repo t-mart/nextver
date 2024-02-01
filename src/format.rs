@@ -169,9 +169,9 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                 // check that specifiers are in order
                 if let Some(last_spec) = last_spec {
                     // if !(last_spec > spec) {
-                    if matches!(
+                    if !matches!(
                         last_spec.partial_cmp(spec),
-                        Some(Ordering::Less) | Some(Ordering::Equal) | None
+                        Some(Ordering::Greater)
                     ) {
                         return Err(FormatError::SpecifiersMustStepDecrease {
                             prev: last_spec.to_string(),
