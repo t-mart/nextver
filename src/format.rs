@@ -4,12 +4,11 @@ use crate::{
     specifier::Specifier,
     version::Version,
 };
-use core::fmt::{self, Display};
-use regex::bytes::Regex;
-use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::cmp::Ordering;
-use std::str;
+use core::{
+    cmp::Ordering,
+    fmt::{self, Display},
+    str,
+};
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum FormatToken<'fs, S: Scheme> {
@@ -22,20 +21,6 @@ impl<'fs, S: Scheme> Clone for FormatToken<'fs, S> {
         match self {
             FormatToken::Specifier(spec) => FormatToken::Specifier(*spec),
             FormatToken::Literal(text) => FormatToken::Literal(text),
-        }
-    }
-}
-
-impl<'fs, S: Scheme> FormatToken<'fs, S> {
-    fn version_pattern_group(&self) -> Cow<'static, [u8]> {
-        match self {
-            FormatToken::Specifier(spec) => Cow::Borrowed(spec.version_pattern()),
-            FormatToken::Literal(text) => {
-                let s = unsafe { str::from_utf8_unchecked(text) };
-                let s = format!("({})", regex::escape(s));
-                let s = s.as_bytes().to_vec();
-                Cow::Owned(s)
-            }
         }
     }
 }
@@ -132,41 +117,11 @@ See the specifier table [here](crate#specifier-table) for a list of all specifie
 #[derive(Debug, Clone)]
 pub struct Format<'fs, S: Scheme> {
     pub(crate) tokens: Vec<FormatToken<'fs, S>>,
-    regex: OnceCell<Regex>,
 }
 
 impl<'fs, S: Scheme> Format<'fs, S> {
-    pub(crate) fn new(tokens: Vec<FormatToken<'fs, S>>, regex: OnceCell<Regex>) -> Self {
-        Self { tokens, regex }
-    }
-
-    pub(crate) fn from_tokens(tokens: Vec<FormatToken<'fs, S>>) -> Self {
-        Self::new(tokens, OnceCell::new())
-    }
-
-    /// Get the regex pattern for this format. Caches the regex if it hasn't been created yet.
-    pub(crate) fn get_regex(&self) -> &Regex {
-        self.regex.get_or_init(|| {
-            let mut str_cap = 0usize;
-            let mut tokens = Vec::with_capacity(self.tokens.len());
-            tokens.extend(self.tokens.iter().map(|token| {
-                let pattern = token.version_pattern_group();
-                str_cap += pattern.len();
-                pattern
-            }));
-
-            // +2 for ^ and $
-            let mut pattern = String::with_capacity(str_cap + 2);
-            pattern.push('^');
-            for token in tokens {
-                for byte in token.iter() {
-                    pattern.push(char::from(*byte));
-                }
-                // pattern.push_str(&token);
-            }
-            pattern.push('$');
-            Regex::new(&pattern).unwrap()
-        })
+    pub(crate) fn new(tokens: Vec<FormatToken<'fs, S>>) -> Self {
+        Self { tokens }
     }
 
     /// Parse a format string into a Format struct.
@@ -262,7 +217,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     // contiguous memory and we know that the length of the underlying string is at
                     // least this long.
                     *last_literal = unsafe {
-                        std::slice::from_raw_parts(
+                        core::slice::from_raw_parts(
                             last_literal.as_ptr(),              //same ptr
                             last_literal.len() + literal.len(), // new len
                         )
@@ -289,7 +244,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
             return Err(FormatError::NoSpecifiersInFormat);
         }
 
-        Ok(Self::from_tokens(tokens))
+        Ok(Self::new(tokens))
     }
 
     /// Create a new version from this format and a version string.
@@ -324,7 +279,7 @@ impl<'fs, S: Scheme> Display for Format<'fs, S> {
     /// let format = Cal::new_format(format_str).unwrap();
     /// assert_eq!(format_str, format.to_string());
     /// ```
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         for token in &self.tokens {
             write!(f, "{}", token)?;
         }

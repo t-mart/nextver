@@ -5,8 +5,8 @@ use crate::{
     specifier::{CalSemIncrSpecifier, NextArgument, ParseWidth, SemSpecifier, Specifier},
 };
 use chrono::{Local, NaiveDate, Utc};
-use core::fmt::{self, Display};
-use std::{
+use core::{
+    fmt::{self, Display},
     ops::Deref,
     ptr,
     str::{self, FromStr},
@@ -167,69 +167,10 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     /// - If the version string does not match the format string, returns a
     ///   [VersionError::VersionFormatMismatch].
     pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, VersionError> {
-        // Version::parse_with_regex(version_str.as_bytes(), format)
-        Version::parse_with_scanner(version_str.as_bytes(), format)
-    }
-
-    fn parse_with_regex(version_str: &'vs [u8], format: &Format<S>) -> Result<Self, VersionError> {
-        let Some(captures) = format.get_regex().captures(version_str) else {
-            return Err(VersionError::VersionFormatMismatch {
-                version_string: unsafe { str::from_utf8_unchecked(version_str) }.to_owned(),
-                format_string: format.to_string(),
-            });
-        };
-
-        let mut tokens = Vec::with_capacity(format.tokens.len());
-
-        // skip the first capture because it's the implicit group of the whole regex
-        let group_captures = captures.iter().skip(1);
-
-        for (match_, format_token) in group_captures.zip(&format.tokens) {
-            let Some(match_) = match_ else {
-                // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
-                // currently construct our format patterns this way, so this is almost certainly a
-                // bug.
-                panic!("unexpected empty version pattern group")
-            };
-
-            let text = match_.as_bytes();
-
-            let token = match format_token {
-                FormatToken::Specifier(specifier) => {
-                    let value = unsafe { std::str::from_utf8_unchecked(text) }
-                        .parse()
-                        .unwrap();
-                    VersionToken::Value {
-                        value,
-                        spec: *specifier,
-                    }
-                }
-                FormatToken::Literal(format_text) => {
-                    if !text.eq(*format_text) {
-                        return Err(VersionError::VersionFormatMismatch {
-                            version_string: unsafe { std::str::from_utf8_unchecked(version_str) }
-                                .to_string(),
-                            format_string: format.to_string(),
-                        });
-                    }
-                    VersionToken::Literal(text)
-                }
-            };
-
-            tokens.push(token);
-        }
-
-        Ok(Self { tokens })
-    }
-
-    fn parse_with_scanner(
-        version_str: &'vs [u8],
-        format: &Format<S>,
-    ) -> Result<Self, VersionError> {
-        Self::parse_rec(version_str, &format.tokens, &[])
+        Self::parse_rec(version_str.as_bytes(), &format.tokens, &[])
             .map(|tokens| Version::new(tokens))
             .ok_or(VersionError::VersionFormatMismatch {
-                version_string: unsafe { str::from_utf8_unchecked(version_str) }.to_owned(),
+                version_string: version_str.to_owned(),
                 format_string: format.to_string(),
             })
     }
@@ -262,16 +203,29 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                         if version_str.len() < 2 {
                             return None;
                         }
-                        let (value_str, version_str) = version_str.split_at(2);
-                        if value_str.starts_with(b"0") && !specifier.can_be_zero() {
-                            return None;
-                        }
-                        let value = unsafe { std::str::from_utf8_unchecked(value_str) }
-                            .parse()
-                            .ok()?;
-                        if value == 0 && !specifier.can_be_zero() {
-                            return None;
-                        }
+                        let tens_c = &version_str[0];
+                        let ones_c = &version_str[1];
+                        let version_str = &version_str[2..];
+
+                        let tens = tens_c.is_ascii_digit().then(|| (tens_c - b'0') as u32)?;
+                        let ones = ones_c.is_ascii_digit().then(|| (ones_c - b'0') as u32)?;
+
+                        let value = if tens == 0 {
+                            if ones == 0 {
+                                if !specifier.can_be_zero() {
+                                    return None;
+                                } else {
+                                    0
+                                }
+                            } else if specifier.zero_pad_len().is_none(){
+                                // 0x, where x is 1 through 9, and no zero-padding allowed
+                                return None;
+                            } else {
+                                ones
+                            }
+                        } else {
+                            tens * 10 + ones
+                        };
                         let mut new_ver_tokens = ver_tokens.to_vec();
                         new_ver_tokens.push(VersionToken::Value {
                             value,
@@ -284,55 +238,75 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                             &new_ver_tokens,
                         )
                     }
-                    ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => {
-                        let end = match specifier.parse_width() {
-                            ParseWidth::OneOrTwo => 2,
-                            ParseWidth::AtLeastOne => version_str.len(),
-                            _ => unreachable!(),
+                    ParseWidth::OneOrTwo | ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => {
+                        let min_width = match specifier.parse_width() {
+                            ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => 1,
+                            ParseWidth::AtLeastTwo | ParseWidth::Two => 2,
+                        };
+                        let max_width = match specifier.parse_width() {
+                            ParseWidth::OneOrTwo | ParseWidth::Two => 2,
+                            ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => version_str.len(),
                         };
                         let mut value = 0u32;
                         let mut continue_iterating = true;
-                        for i in 0..end {
+                        for idx in 0..max_width {
                             if !continue_iterating {
                                 break;
                             }
-                            let next = version_str[i];
+                            let next = version_str[idx];
                             if !next.is_ascii_digit() {
                                 return None; // can't be digit, so this'll never be valid
                             }
                             value = value * 10 + (next - b'0') as u32;
 
+                            let cur_width = idx + 1;
+                            if cur_width < min_width {
+                                continue;
+                            }
+
+                            // cases:
+                            // - can be zero=true, zero-padded=true (0Y, 0W)
+                            //
+                            //   iterate to end normally
+                            //
+                            // - can be zero=true, zero-padded=false (MAJOR, MINOR, PATCH, YY,
+                            //   WW)
+                            //
+                            //   if we encounter a zero first, try this iteration, but no
+                            //   subsequent (set continue_iterating to false). else, iterate to
+                            //   end normally
+                            //
+                            // - can be zero=false, zero-padded=true (0M, 0D)
+                            //
+                            //   if we encounter a zero first, skip/continue until we find
+                            //   non-zero. else, iterate to end normally. NOTE: currently, 0M
+                            //   and 0D are the only specifiers with this quality, and they'd be
+                            //   handled by the ParseWidth::Two arm, but we keep it here for
+                            //   completeness.
+                            //
+                            // - can be zero=false, zero-padded=false (YYYY, MM, DD)
+                            //
+                            //   if we encounter a zero first, return None. else, iterate to end
+                            //   normally
                             if value == 0 {
-                                // cases:
-                                // - can be zero=true, zero-padded=true (0Y, WW)
-                                //   iterate to end
-                                //
-                                // - can be zero=true, zero-padded=false (MAJOR, MINOR, PATCH, YY, WW)
-                                //   if we encounter a zero first, try this iteration, but no subsequent
-                                //   if not zero, iterate to end
-                                //
-                                // - can be zero=false, zero-padded=true (0M, 0D)
-                                //   if we encounter a zero first, skip/continue until we find non-zero
-                                //   if not zero, iterate to end
-                                //
-                                // - can be zero=false, zero-padded=false (YYYY, MM, DD)
-                                //   if we encounter a zero first, return None
-                                //   if not zero, iterate to end
                                 match (specifier.can_be_zero(), specifier.zero_pad_len().is_some())
                                 {
+                                    (true, true) => {
+                                        // can be zero, and zero-padded: iterate to end normally
+                                    }
                                     (true, false) => {
-                                        // can be zero, but not zero-padded
+                                        // can be zero, and not zero-padded: just this iteration,
+                                        // and no more
                                         continue_iterating = false;
                                     }
-                                    (true, true) => {
-                                        // can be zero, and zero-padded
+                                    (false, true) => {
+                                        // can't be zero, and zero-padded: continue until non-zero
                                         continue;
                                     }
                                     (false, false) => {
-                                        // can't be zero, and not zero-padded
+                                        // can't be zero, and not zero-padded: return None
                                         return None;
                                     }
-                                    _ => (),
                                 }
                             }
                             let mut new_ver_tokens = ver_tokens.to_vec();
@@ -341,7 +315,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                                 spec: specifier,
                             });
                             if let Some(new_ver_tokens) = Self::parse_rec(
-                                &version_str[i + 1..],
+                                &version_str[idx + 1..],
                                 &fmt_tokens[1..],
                                 &new_ver_tokens,
                             ) {
@@ -660,30 +634,6 @@ impl<'vs, S: Scheme> Display for Version<'vs, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn lol() {
-        let format_str = "[MAJOR].[MINOR].[PATCH]";
-        let version_str = "5.1.12390";
-        let spec = SemSpecifier::Minor;
-        let next = Sem::next_string(format_str, version_str, &spec).unwrap();
-        dbg!(&next.to_string());
-    }
-
-    // #[test]
-    // fn lol2() {
-    //     let format_str = "[MAJOR].[MINOR].[PATCH]";
-    //     let version_str = "5.1.12390";
-    //     // let date = Date::explicit(2024, 1, 27).unwrap();
-    //     // let spec = CalSemIncrSpecifier::Minor;
-
-    //     let format = Sem::new_format(format_str).unwrap();
-    //     dbg!(&format);
-    //     let version = format.new_version(version_str).unwrap();
-    //     dbg!(&version.to_string());
-    //     let next = version.next(&SemSpecifier::Major).unwrap();
-    //     dbg!(&next.to_string());
-    // }
 
     #[test]
     fn test_major_minor_patch_parse() {

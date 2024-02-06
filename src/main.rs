@@ -1,6 +1,5 @@
-use std::str::FromStr;
-
 use clap::{arg, command, Parser, Subcommand, ValueEnum};
+use core::str::FromStr;
 use nextver::prelude::*;
 
 #[derive(thiserror::Error, Debug, PartialEq)]

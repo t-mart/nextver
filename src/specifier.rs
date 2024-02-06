@@ -1,7 +1,9 @@
 use crate::error::VersionError;
 use chrono::{Datelike, NaiveDate};
-use std::cmp::Ordering;
-use std::fmt::{self, Debug, Display};
+use core::{
+    cmp::Ordering,
+    fmt::{self, Debug, Display},
+};
 
 type Next = u32;
 type NextResult = Result<u32, VersionError>;
@@ -60,8 +62,6 @@ pub(crate) trait Specifier:
 {
     fn format_pattern(&self) -> &'static [u8];
 
-    fn version_pattern(&self) -> &'static [u8];
-
     fn zero_pad_len(&self) -> Option<usize>;
 
     fn first_variants() -> &'static [&'static Self];
@@ -83,11 +83,6 @@ pub(crate) trait Specifier:
         }
     }
 
-    // TODO: remove this?
-    fn parse_value_str(&self, value: &str) -> u32 {
-        value.parse().unwrap()
-    }
-
     fn iter_all() -> impl Iterator<Item = &'static &'static Self>;
 
     fn parse_width(&self) -> ParseWidth;
@@ -95,79 +90,64 @@ pub(crate) trait Specifier:
     fn can_be_zero(&self) -> bool;
 }
 
+#[non_exhaustive]
 pub(crate) enum ParseWidth {
     AtLeastOne,
+    AtLeastTwo,
     OneOrTwo,
     Two,
 }
 
-// not zero padded, any length
-const NO_ZP_ANY_LEN_PATTERN: &str = r"((?:0)|(?:[1-9][0-9]*))";
-// not zero padded, 1-2 digits, no 0
-const CAL_SHORT_MONTH_DAY_PATTERN: &str = r"([1-9][0-9]?)";
-// zero padded, 2 digits, no 00
-const CAL_ZERO_PADDED_MONTH_DAY_PATTERN: &str = r"((?:0[1-9])|(?:[1-9][0-9]))";
+const MAJOR_FORMAT_PATTERN: &[u8] = b"[MAJOR]";
 
-const MAJOR_FORMAT_PATTERN: &str = "[MAJOR]";
-const MAJOR_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN;
+const MINOR_FORMAT_PATTERN: &[u8] = b"[MINOR]";
 
-const MINOR_FORMAT_PATTERN: &str = "[MINOR]";
-const MINOR_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN;
-
-const PATCH_FORMAT_PATTERN: &str = "[PATCH]";
-const PATCH_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN;
+const PATCH_FORMAT_PATTERN: &[u8] = b"[PATCH]";
 
 const SEM_ZERO_PAD_LEN: Option<usize> = None;
 const SEM_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 const SEM_CAN_BE_ZERO: bool = true;
 
-const YEAR_FULL_FORMAT_STRINGS: &str = "[YYYY]";
-const YEAR_FULL_VERSION_PATTERN: &str = r"([1-9][0-9]*)"; // there is no year 0,
+const YEAR_FULL_FORMAT_STRINGS: &[u8] = b"[YYYY]";
 const YEAR_FULL_ZERO_PAD_LEN: Option<usize> = None;
 const YEAR_FULL_NEXT_FN: NextDateFn = full_year_next;
 const YEAR_FULL_CAN_BE_ZERO: bool = false;
+const YEAR_FULL_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 
-const YEAR_SHORT_FORMAT_STRINGS: &str = "[YY]";
-const YEAR_SHORT_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN; // match year 0 (2000), but otherwise, must start [1-9]
+const YEAR_SHORT_FORMAT_STRINGS: &[u8] = b"[YY]";
 const YEAR_SHORT_ZERO_PAD_LEN: Option<usize> = None;
 const YEAR_SHORT_CAN_BE_ZERO: bool = true;
+const YEAR_SHORT_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 
-const YEAR_ZERO_PADDED_FORMAT_STRINGS: &str = "[0Y]";
-const YEAR_ZERO_PADDED_VERSION_PATTERN: &str = r"([0-9]{2,})"; // 00 is fine
+const YEAR_ZERO_PADDED_FORMAT_STRINGS: &[u8] = b"[0Y]";
 const YEAR_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 const YEAR_ZERO_PADDED_CAN_BE_ZERO: bool = true;
+const YEAR_ZERO_PADDED_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastTwo;
 
-const YEAR_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 const YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = short_year_next;
 
-const MONTH_SHORT_FORMAT_STRINGS: &str = "[MM]";
-const MONTH_SHORT_VERSION_PATTERN: &str = CAL_SHORT_MONTH_DAY_PATTERN;
+const MONTH_SHORT_FORMAT_STRINGS: &[u8] = b"[MM]";
 const MONTH_SHORT_ZERO_PAD_LEN: Option<usize> = None;
 
-const MONTH_ZERO_PADDED_FORMAT_STRINGS: &str = "[0M]";
-const MONTH_ZERO_PADDED_VERSION_PATTERN: &str = CAL_ZERO_PADDED_MONTH_DAY_PATTERN;
+const MONTH_ZERO_PADDED_FORMAT_STRINGS: &[u8] = b"[0M]";
 const MONTH_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
 const MONTH_CAN_BE_ZERO: bool = false;
 const MONTH_NEXT_FN: NextDateFn = month_next;
 
-const WEEK_SHORT_FORMAT_STRINGS: &str = "[WW]";
-const WEEK_SHORT_VERSION_PATTERN: &str = r"((?:[0-9])|(?:[1-9][0-9]))";
+const WEEK_SHORT_FORMAT_STRINGS: &[u8] = b"[WW]";
 const WEEK_SHORT_ZERO_PAD_LEN: Option<usize> = None;
 
-const WEEK_ZERO_PADDED_FORMAT_STRINGS: &str = "[0W]";
-const WEEK_ZERO_PADDED_VERSION_PATTERN: &str = r"([0-9]{2})";
+const WEEK_ZERO_PADDED_FORMAT_STRINGS: &[u8] = b"[0W]";
 const WEEK_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
 const WEEK_CAN_BE_ZERO: bool = true;
 const WEEK_NEXT_FN: NextDateFn = weeks_from_sunday_next;
 
-const DAY_SHORT_FORMAT_STRINGS: &str = "[DD]";
-const DAY_SHORT_VERSION_PATTERN: &str = CAL_SHORT_MONTH_DAY_PATTERN;
+const DAY_SHORT_FORMAT_STRINGS: &[u8] = b"[DD]";
 const DAY_SHORT_ZERO_PAD_LEN: Option<usize> = None;
 
-const DAY_ZERO_PADDED_FORMAT_STRINGS: &str = "[0D]";
-const DAY_ZERO_PADDED_VERSION_PATTERN: &str = CAL_ZERO_PADDED_MONTH_DAY_PATTERN;
+const DAY_ZERO_PADDED_FORMAT_STRINGS: &[u8] = b"[0D]";
 const DAY_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
 const MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH: ParseWidth = ParseWidth::Two;
@@ -176,6 +156,7 @@ const DAY_NEXT_FN: NextDateFn = day_next;
 const DAY_CAN_BE_ZERO: bool = false;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[non_exhaustive]
 pub(crate) enum YearType {
     Full,
     Short,
@@ -183,6 +164,7 @@ pub(crate) enum YearType {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[non_exhaustive]
 pub(crate) enum NonYearType {
     Short,
     ZeroPadded,
@@ -198,6 +180,7 @@ pub(crate) trait NextArgument {
 
 /// A semantic version specifier, such as `[MAJOR]` or `[MINOR]`.
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
 pub enum SemSpecifier {
     /// A major version specifier, such as `[MAJOR]`.
     Major,
@@ -283,17 +266,6 @@ impl Specifier for SemSpecifier {
             Minor => MINOR_FORMAT_PATTERN,
             Patch => PATCH_FORMAT_PATTERN,
         }
-        .as_bytes()
-    }
-
-    fn version_pattern(&self) -> &'static [u8] {
-        use SemSpecifier::*;
-        match self {
-            Major => MAJOR_VERSION_PATTERN,
-            Minor => MINOR_VERSION_PATTERN,
-            Patch => PATCH_VERSION_PATTERN,
-        }
-        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -328,6 +300,7 @@ const SEM_ALL: &[&SemSpecifier] = &[&SEM_MAJOR, &SEM_MINOR, &SEM_PATCH];
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[repr(u8)]
+#[non_exhaustive]
 pub(crate) enum CalSpecifier {
     Year(YearType) = 3,
     Month(NonYearType) = 2,
@@ -419,31 +392,6 @@ impl Specifier for CalSpecifier {
                 NonYearType::ZeroPadded => DAY_ZERO_PADDED_FORMAT_STRINGS,
             },
         }
-        .as_bytes()
-    }
-
-    fn version_pattern(&self) -> &'static [u8] {
-        use CalSpecifier::*;
-        match self {
-            Year(type_) => match type_ {
-                YearType::Full => YEAR_FULL_VERSION_PATTERN,
-                YearType::Short => YEAR_SHORT_VERSION_PATTERN,
-                YearType::ZeroPadded => YEAR_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Month(type_) => match type_ {
-                NonYearType::Short => MONTH_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => MONTH_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Week(type_) => match type_ {
-                NonYearType::Short => WEEK_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => WEEK_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Day(type_) => match type_ {
-                NonYearType::Short => DAY_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => DAY_ZERO_PADDED_VERSION_PATTERN,
-            },
-        }
-        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -484,7 +432,9 @@ impl Specifier for CalSpecifier {
 
     fn parse_width(&self) -> ParseWidth {
         match self {
-            CalSpecifier::Year(_) => YEAR_PARSE_WIDTH,
+            CalSpecifier::Year(YearType::Full) => YEAR_FULL_PARSE_WIDTH,
+            CalSpecifier::Year(YearType::Short) => YEAR_SHORT_PARSE_WIDTH,
+            CalSpecifier::Year(YearType::ZeroPadded) => YEAR_ZERO_PADDED_PARSE_WIDTH,
             CalSpecifier::Month(NonYearType::ZeroPadded)
             | CalSpecifier::Week(NonYearType::ZeroPadded)
             | CalSpecifier::Day(NonYearType::ZeroPadded) => MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH,
@@ -561,6 +511,7 @@ impl NextArgument for CalSemIncrSpecifier {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
 pub(crate) enum CalSemSpecifier {
     Year(YearType),
     Month(NonYearType),
@@ -676,33 +627,6 @@ impl Specifier for CalSemSpecifier {
             Minor => MINOR_FORMAT_PATTERN,
             Patch => PATCH_FORMAT_PATTERN,
         }
-        .as_bytes()
-    }
-
-    fn version_pattern(&self) -> &'static [u8] {
-        use CalSemSpecifier::*;
-        match self {
-            Year(type_) => match type_ {
-                YearType::Full => YEAR_FULL_VERSION_PATTERN,
-                YearType::Short => YEAR_SHORT_VERSION_PATTERN,
-                YearType::ZeroPadded => YEAR_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Month(type_) => match type_ {
-                NonYearType::Short => MONTH_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => MONTH_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Week(type_) => match type_ {
-                NonYearType::Short => WEEK_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => WEEK_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Day(type_) => match type_ {
-                NonYearType::Short => DAY_SHORT_VERSION_PATTERN,
-                NonYearType::ZeroPadded => DAY_ZERO_PADDED_VERSION_PATTERN,
-            },
-            Minor => MINOR_VERSION_PATTERN,
-            Patch => PATCH_VERSION_PATTERN,
-        }
-        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -759,7 +683,9 @@ impl Specifier for CalSemSpecifier {
 
     fn parse_width(&self) -> ParseWidth {
         match self {
-            CalSemSpecifier::Year(_) => YEAR_PARSE_WIDTH,
+            CalSemSpecifier::Year(YearType::Full) => YEAR_FULL_PARSE_WIDTH,
+            CalSemSpecifier::Year(YearType::Short) => YEAR_SHORT_PARSE_WIDTH,
+            CalSemSpecifier::Year(YearType::ZeroPadded) => YEAR_ZERO_PADDED_PARSE_WIDTH,
 
             CalSemSpecifier::Month(NonYearType::ZeroPadded)
             | CalSemSpecifier::Week(NonYearType::ZeroPadded)

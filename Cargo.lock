@@ -517,7 +517,6 @@ dependencies = [
  "clap",
  "criterion",
  "itertools 0.12.0",
- "regex",
  "rstest",
  "thiserror",
 ]
