@@ -58,9 +58,9 @@ fn day_next(date: &NaiveDate) -> Result<u32, VersionError> {
 pub(crate) trait Specifier:
     PartialEq + Eq + PartialOrd + Debug + Display + Sized + 'static
 {
-    fn format_pattern(&self) -> &'static str;
+    fn format_pattern(&self) -> &'static [u8];
 
-    fn version_pattern(&self) -> &'static str;
+    fn version_pattern(&self) -> &'static [u8];
 
     fn zero_pad_len(&self) -> Option<usize>;
 
@@ -82,11 +82,23 @@ pub(crate) trait Specifier:
             None => u32::to_string(value),
         }
     }
+
+    // TODO: remove this?
     fn parse_value_str(&self, value: &str) -> u32 {
         value.parse().unwrap()
     }
 
     fn iter_all() -> impl Iterator<Item = &'static &'static Self>;
+
+    fn parse_width(&self) -> ParseWidth;
+
+    fn can_be_zero(&self) -> bool;
+}
+
+pub(crate) enum ParseWidth {
+    AtLeastOne,
+    OneOrTwo,
+    Two,
 }
 
 // not zero padded, any length
@@ -106,20 +118,26 @@ const PATCH_FORMAT_PATTERN: &str = "[PATCH]";
 const PATCH_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN;
 
 const SEM_ZERO_PAD_LEN: Option<usize> = None;
+const SEM_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
+const SEM_CAN_BE_ZERO: bool = true;
 
 const YEAR_FULL_FORMAT_STRINGS: &str = "[YYYY]";
 const YEAR_FULL_VERSION_PATTERN: &str = r"([1-9][0-9]*)"; // there is no year 0,
 const YEAR_FULL_ZERO_PAD_LEN: Option<usize> = None;
 const YEAR_FULL_NEXT_FN: NextDateFn = full_year_next;
+const YEAR_FULL_CAN_BE_ZERO: bool = false;
 
 const YEAR_SHORT_FORMAT_STRINGS: &str = "[YY]";
 const YEAR_SHORT_VERSION_PATTERN: &str = NO_ZP_ANY_LEN_PATTERN; // match year 0 (2000), but otherwise, must start [1-9]
 const YEAR_SHORT_ZERO_PAD_LEN: Option<usize> = None;
+const YEAR_SHORT_CAN_BE_ZERO: bool = true;
 
 const YEAR_ZERO_PADDED_FORMAT_STRINGS: &str = "[0Y]";
 const YEAR_ZERO_PADDED_VERSION_PATTERN: &str = r"([0-9]{2,})"; // 00 is fine
 const YEAR_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
+const YEAR_ZERO_PADDED_CAN_BE_ZERO: bool = true;
 
+const YEAR_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 const YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = short_year_next;
 
 const MONTH_SHORT_FORMAT_STRINGS: &str = "[MM]";
@@ -130,7 +148,8 @@ const MONTH_ZERO_PADDED_FORMAT_STRINGS: &str = "[0M]";
 const MONTH_ZERO_PADDED_VERSION_PATTERN: &str = CAL_ZERO_PADDED_MONTH_DAY_PATTERN;
 const MONTH_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
-const MONTH_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = month_next;
+const MONTH_CAN_BE_ZERO: bool = false;
+const MONTH_NEXT_FN: NextDateFn = month_next;
 
 const WEEK_SHORT_FORMAT_STRINGS: &str = "[WW]";
 const WEEK_SHORT_VERSION_PATTERN: &str = r"((?:[0-9])|(?:[1-9][0-9]))";
@@ -140,7 +159,8 @@ const WEEK_ZERO_PADDED_FORMAT_STRINGS: &str = "[0W]";
 const WEEK_ZERO_PADDED_VERSION_PATTERN: &str = r"([0-9]{2})";
 const WEEK_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
-const WEEK_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = weeks_from_sunday_next;
+const WEEK_CAN_BE_ZERO: bool = true;
+const WEEK_NEXT_FN: NextDateFn = weeks_from_sunday_next;
 
 const DAY_SHORT_FORMAT_STRINGS: &str = "[DD]";
 const DAY_SHORT_VERSION_PATTERN: &str = CAL_SHORT_MONTH_DAY_PATTERN;
@@ -150,7 +170,10 @@ const DAY_ZERO_PADDED_FORMAT_STRINGS: &str = "[0D]";
 const DAY_ZERO_PADDED_VERSION_PATTERN: &str = CAL_ZERO_PADDED_MONTH_DAY_PATTERN;
 const DAY_ZERO_PADDED_ZERO_PAD_LEN: Option<usize> = Some(2);
 
-const DAY_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = day_next;
+const MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH: ParseWidth = ParseWidth::Two;
+const MONTH_WEEK_DAY_SHORT_PARSE_WIDTH: ParseWidth = ParseWidth::OneOrTwo;
+const DAY_NEXT_FN: NextDateFn = day_next;
+const DAY_CAN_BE_ZERO: bool = false;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub(crate) enum YearType {
@@ -165,10 +188,12 @@ pub(crate) enum NonYearType {
     ZeroPadded,
 }
 
-pub(crate) trait StaticReferrableSpecifier {
+pub(crate) trait NextArgument {
     type Specifier: Specifier;
 
-    fn static_spec(&self) -> &'static Self::Specifier;
+    fn as_static_spec_ref(&self) -> &'static Self::Specifier;
+
+    fn should_update(&self, other: &Self::Specifier) -> bool;
 }
 
 /// A semantic version specifier, such as `[MAJOR]` or `[MINOR]`.
@@ -188,24 +213,37 @@ impl SemSpecifier {
     }
 }
 
-impl StaticReferrableSpecifier for SemSpecifier {
+impl NextArgument for SemSpecifier {
     type Specifier = Self;
-    fn static_spec(&self) -> &'static Self::Specifier {
+    fn as_static_spec_ref(&self) -> &'static Self::Specifier {
         match self {
             Self::Major => &SEM_MAJOR,
             Self::Minor => &SEM_MINOR,
             Self::Patch => &SEM_PATCH,
         }
     }
+
+    fn should_update(&self, other: &Self::Specifier) -> bool {
+        matches!(
+            (self, other),
+            (Self::Major, _)
+                | (Self::Minor, Self::Specifier::Minor)
+                | (Self::Minor, Self::Specifier::Patch)
+                | (Self::Patch, Self::Specifier::Patch)
+        )
+    }
 }
 
+// TODO: this feels sorta like an abuse of partial ord. we should probably just put a trait method
+// on Specifier called "can_be_right_of" or something. i think that would actually be simpler to
+// implement because it's only one-way
 impl PartialOrd for SemSpecifier {
     /// Compare two adjacent semantic specifiers.
-    /// 
+    ///
     /// This is only a *partial* ordering. We use this to determine if two specifiers can be
     /// adjacent. For specifiers `a` and `b` in a format string, `a` can only be to the immediate
     /// left of `b` if `a.partial_cmp(&b) == Some(Greater)`. In other words, *not* if they are:
-    /// 
+    ///
     /// - `Some(Equal)`: this would be the same specifier twice
     /// - `Some(Less)`: this would mean `a` is less significant than `b`, which is not allowed.
     ///   Specifiers must "step down" in significance.
@@ -231,27 +269,31 @@ impl PartialOrd for SemSpecifier {
 
 impl Display for SemSpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format_pattern())
+        write!(f, "{}", unsafe {
+            std::str::from_utf8_unchecked(self.format_pattern())
+        })
     }
 }
 
 impl Specifier for SemSpecifier {
-    fn format_pattern(&self) -> &'static str {
+    fn format_pattern(&self) -> &'static [u8] {
         use SemSpecifier::*;
         match self {
             Major => MAJOR_FORMAT_PATTERN,
             Minor => MINOR_FORMAT_PATTERN,
             Patch => PATCH_FORMAT_PATTERN,
         }
+        .as_bytes()
     }
 
-    fn version_pattern(&self) -> &'static str {
+    fn version_pattern(&self) -> &'static [u8] {
         use SemSpecifier::*;
         match self {
             Major => MAJOR_VERSION_PATTERN,
             Minor => MINOR_VERSION_PATTERN,
             Patch => PATCH_VERSION_PATTERN,
         }
+        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -269,6 +311,14 @@ impl Specifier for SemSpecifier {
 
     fn iter_all() -> impl Iterator<Item = &'static &'static Self> {
         SEM_ALL.iter()
+    }
+
+    fn parse_width(&self) -> ParseWidth {
+        SEM_PARSE_WIDTH
+    }
+
+    fn can_be_zero(&self) -> bool {
+        SEM_CAN_BE_ZERO
     }
 }
 pub(crate) const SEM_MAJOR: SemSpecifier = SemSpecifier::Major;
@@ -293,20 +343,20 @@ impl CalSpecifier {
                 YearType::Short => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
                 YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
             },
-            CalSpecifier::Month(_) => MONTH_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-            CalSpecifier::Week(_) => WEEK_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-            CalSpecifier::Day(_) => DAY_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
+            CalSpecifier::Month(_) => MONTH_NEXT_FN(date),
+            CalSpecifier::Week(_) => WEEK_NEXT_FN(date),
+            CalSpecifier::Day(_) => DAY_NEXT_FN(date),
         }
     }
 }
 
 impl PartialOrd for CalSpecifier {
     /// Compare two adjacent calendar specifiers.
-    /// 
+    ///
     /// This is only a *partial* ordering. We use this to determine if two specifiers can be
     /// adjacent. For specifiers `a` and `b` in a format string, `a` can only be to the immediate
     /// left of `b` if `a.partial_cmp(&b) == Some(Greater)`. In other words, *not* if they are:
-    /// 
+    ///
     /// - `Some(Equal)`: this would be the same specifier twice
     /// - `Some(Less)`: this would mean `a` is less significant than `b`, which is not allowed.
     ///   Specifiers must "step down" in significance.
@@ -341,12 +391,14 @@ impl PartialOrd for CalSpecifier {
 
 impl Display for CalSpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format_pattern())
+        write!(f, "{}", unsafe {
+            std::str::from_utf8_unchecked(self.format_pattern())
+        })
     }
 }
 
 impl Specifier for CalSpecifier {
-    fn format_pattern(&self) -> &'static str {
+    fn format_pattern(&self) -> &'static [u8] {
         use CalSpecifier::*;
         match self {
             Year(type_) => match type_ {
@@ -367,9 +419,10 @@ impl Specifier for CalSpecifier {
                 NonYearType::ZeroPadded => DAY_ZERO_PADDED_FORMAT_STRINGS,
             },
         }
+        .as_bytes()
     }
 
-    fn version_pattern(&self) -> &'static str {
+    fn version_pattern(&self) -> &'static [u8] {
         use CalSpecifier::*;
         match self {
             Year(type_) => match type_ {
@@ -390,6 +443,7 @@ impl Specifier for CalSpecifier {
                 NonYearType::ZeroPadded => DAY_ZERO_PADDED_VERSION_PATTERN,
             },
         }
+        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -427,6 +481,32 @@ impl Specifier for CalSpecifier {
     fn iter_all() -> impl Iterator<Item = &'static &'static Self> {
         CAL_ALL.iter()
     }
+
+    fn parse_width(&self) -> ParseWidth {
+        match self {
+            CalSpecifier::Year(_) => YEAR_PARSE_WIDTH,
+            CalSpecifier::Month(NonYearType::ZeroPadded)
+            | CalSpecifier::Week(NonYearType::ZeroPadded)
+            | CalSpecifier::Day(NonYearType::ZeroPadded) => MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH,
+            CalSpecifier::Month(NonYearType::Short)
+            | CalSpecifier::Week(NonYearType::Short)
+            | CalSpecifier::Day(NonYearType::Short) => MONTH_WEEK_DAY_SHORT_PARSE_WIDTH,
+        }
+    }
+
+    fn can_be_zero(&self) -> bool {
+        use CalSpecifier::*;
+        match self {
+            Year(type_) => match type_ {
+                YearType::Full => YEAR_FULL_CAN_BE_ZERO,
+                YearType::Short => YEAR_SHORT_CAN_BE_ZERO,
+                YearType::ZeroPadded => YEAR_ZERO_PADDED_CAN_BE_ZERO,
+            },
+            Month(_) => MONTH_CAN_BE_ZERO,
+            Week(_) => WEEK_CAN_BE_ZERO,
+            Day(_) => DAY_CAN_BE_ZERO,
+        }
+    }
 }
 pub(crate) const CAL_YEAR_FULL: CalSpecifier = CalSpecifier::Year(YearType::Full);
 pub(crate) const CAL_YEAR_SHORT: CalSpecifier = CalSpecifier::Year(YearType::Short);
@@ -461,13 +541,22 @@ pub enum CalSemIncrSpecifier {
     Patch,
 }
 
-impl StaticReferrableSpecifier for CalSemIncrSpecifier {
+impl NextArgument for CalSemIncrSpecifier {
     type Specifier = CalSemSpecifier;
-    fn static_spec(&self) -> &'static Self::Specifier {
+    fn as_static_spec_ref(&self) -> &'static Self::Specifier {
         match self {
             Self::Minor => &CALSEM_MINOR,
             Self::Patch => &CALSEM_PATCH,
         }
+    }
+
+    fn should_update(&self, other: &Self::Specifier) -> bool {
+        matches!(
+            (self, other),
+            (Self::Minor, Self::Specifier::Minor)
+                | (Self::Minor, Self::Specifier::Patch)
+                | (Self::Patch, Self::Specifier::Patch)
+        )
     }
 }
 
@@ -499,9 +588,9 @@ impl CalSemSpecifier {
                 YearType::Short => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
                 YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
             },
-            CalSemSpecifier::Month(_) => MONTH_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-            CalSemSpecifier::Week(_) => WEEK_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-            CalSemSpecifier::Day(_) => DAY_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
+            CalSemSpecifier::Month(_) => MONTH_NEXT_FN(date),
+            CalSemSpecifier::Week(_) => WEEK_NEXT_FN(date),
+            CalSemSpecifier::Day(_) => DAY_NEXT_FN(date),
             CalSemSpecifier::Minor | CalSemSpecifier::Patch => {
                 Ok(sem_next(cur_val, already_bumped))
             }
@@ -511,17 +600,19 @@ impl CalSemSpecifier {
 
 impl Display for CalSemSpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format_pattern())
+        write!(f, "{}", unsafe {
+            std::str::from_utf8_unchecked(self.format_pattern())
+        })
     }
 }
 
 impl PartialOrd for CalSemSpecifier {
     /// Compare two adjacent calendar-semantic specifiers.
-    /// 
+    ///
     /// This is only a *partial* ordering. We use this to determine if two specifiers can be
     /// adjacent. For specifiers `a` and `b` in a format string, `a` can only be to the immediate
     /// left of `b` if `a.partial_cmp(&b) == Some(Greater)`. In other words, *not* if they are:
-    /// 
+    ///
     /// - `Some(Equal)`: this would be the same specifier twice
     /// - `Some(Less)`: this would mean `a` is less significant than `b`, which is not allowed.
     ///   Specifiers must "step down" in significance.
@@ -562,7 +653,7 @@ impl PartialOrd for CalSemSpecifier {
 }
 
 impl Specifier for CalSemSpecifier {
-    fn format_pattern(&self) -> &'static str {
+    fn format_pattern(&self) -> &'static [u8] {
         use CalSemSpecifier::*;
         match self {
             Year(type_) => match type_ {
@@ -585,9 +676,10 @@ impl Specifier for CalSemSpecifier {
             Minor => MINOR_FORMAT_PATTERN,
             Patch => PATCH_FORMAT_PATTERN,
         }
+        .as_bytes()
     }
 
-    fn version_pattern(&self) -> &'static str {
+    fn version_pattern(&self) -> &'static [u8] {
         use CalSemSpecifier::*;
         match self {
             Year(type_) => match type_ {
@@ -610,6 +702,7 @@ impl Specifier for CalSemSpecifier {
             Minor => MINOR_VERSION_PATTERN,
             Patch => PATCH_VERSION_PATTERN,
         }
+        .as_bytes()
     }
 
     fn zero_pad_len(&self) -> Option<usize> {
@@ -662,6 +755,37 @@ impl Specifier for CalSemSpecifier {
 
     fn iter_all() -> impl Iterator<Item = &'static &'static Self> {
         CALSEM_ALL.iter()
+    }
+
+    fn parse_width(&self) -> ParseWidth {
+        match self {
+            CalSemSpecifier::Year(_) => YEAR_PARSE_WIDTH,
+
+            CalSemSpecifier::Month(NonYearType::ZeroPadded)
+            | CalSemSpecifier::Week(NonYearType::ZeroPadded)
+            | CalSemSpecifier::Day(NonYearType::ZeroPadded) => {
+                MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH
+            }
+            CalSemSpecifier::Month(NonYearType::Short)
+            | CalSemSpecifier::Week(NonYearType::Short)
+            | CalSemSpecifier::Day(NonYearType::Short) => MONTH_WEEK_DAY_SHORT_PARSE_WIDTH,
+            CalSemSpecifier::Minor | CalSemSpecifier::Patch => SEM_PARSE_WIDTH,
+        }
+    }
+
+    fn can_be_zero(&self) -> bool {
+        use CalSemSpecifier::*;
+        match self {
+            Year(type_) => match type_ {
+                YearType::Full => YEAR_FULL_CAN_BE_ZERO,
+                YearType::Short => YEAR_SHORT_CAN_BE_ZERO,
+                YearType::ZeroPadded => YEAR_ZERO_PADDED_CAN_BE_ZERO,
+            },
+            Month(_) => MONTH_CAN_BE_ZERO,
+            Week(_) => WEEK_CAN_BE_ZERO,
+            Day(_) => DAY_CAN_BE_ZERO,
+            Minor | Patch => SEM_CAN_BE_ZERO,
+        }
     }
 }
 pub(crate) const CALSEM_YEAR_FULL: CalSemSpecifier = CalSemSpecifier::Year(YearType::Full);
@@ -921,4 +1045,3 @@ mod tests {
             });
     }
 }
-

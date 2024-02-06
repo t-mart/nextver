@@ -73,7 +73,7 @@ fn bench_next_cal(c: &mut Criterion) {
 
 fn bench_next_calsem(c: &mut Criterion) {
     let format_str = "[YYYY].[MM].[DD]-[MINOR].[PATCH]";
-    let version_str = "2020.10.27-1.1263";
+    let version_str = "2020.10.27-0.1263";
     let date = Date::explicit(2024, 1, 27).unwrap();
     let spec = CalSemIncrSpecifier::Minor;
     c.bench_function("bench_next_calsem", |b| {

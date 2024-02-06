@@ -5,15 +5,16 @@ use crate::{
     version::Version,
 };
 use core::fmt::{self, Display};
-use regex::Regex;
+use regex::bytes::Regex;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
+use std::str;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum FormatToken<'fs, S: Scheme> {
     Specifier(&'static S::Specifier),
-    Literal(&'fs str),
+    Literal(&'fs [u8]),
 }
 
 impl<'fs, S: Scheme> Clone for FormatToken<'fs, S> {
@@ -26,10 +27,15 @@ impl<'fs, S: Scheme> Clone for FormatToken<'fs, S> {
 }
 
 impl<'fs, S: Scheme> FormatToken<'fs, S> {
-    fn version_pattern_group(&self) -> Cow<'static, str> {
+    fn version_pattern_group(&self) -> Cow<'static, [u8]> {
         match self {
             FormatToken::Specifier(spec) => Cow::Borrowed(spec.version_pattern()),
-            FormatToken::Literal(text) => Cow::Owned(format!("({})", regex::escape(text))),
+            FormatToken::Literal(text) => {
+                let s = unsafe { str::from_utf8_unchecked(text) };
+                let s = format!("({})", regex::escape(s));
+                let s = s.as_bytes().to_vec();
+                Cow::Owned(s)
+            }
         }
     }
 }
@@ -38,7 +44,20 @@ impl<'fs, S: Scheme> Display for FormatToken<'fs, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FormatToken::Specifier(spec) => write!(f, "{}", spec),
-            FormatToken::Literal(text) => write!(f, "{}", text.replace('[', r"\[")),
+            FormatToken::Literal(text) => {
+                for byte in text.iter() {
+                    match byte {
+                        b'[' => {
+                            // escape opening bracket
+                            write!(f, r"\[")?;
+                        }
+                        _ => {
+                            write!(f, "{}", *byte as char)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -140,7 +159,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
             let mut pattern = String::with_capacity(str_cap + 2);
             pattern.push('^');
             for token in tokens {
-                pattern.push_str(&token);
+                for byte in token.iter() {
+                    pattern.push(char::from(*byte));
+                }
+                // pattern.push_str(&token);
             }
             pattern.push('$');
             Regex::new(&pattern).unwrap()
@@ -157,7 +179,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
     /// - [`NextverError::UnterminatedSpecifier`] if a specifier is not terminated with a
     ///   closing square bracket (`]`).
     pub(crate) fn parse(format_str: &'fs str) -> Result<Self, FormatError> {
-        let mut format = format_str;
+        let mut format = format_str.as_bytes();
         let mut tokens = Vec::with_capacity(S::max_tokens());
         let mut last_spec: Option<&'static S::Specifier> = None;
 
@@ -169,10 +191,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                 // check that specifiers are in order
                 if let Some(last_spec) = last_spec {
                     // if !(last_spec > spec) {
-                    if !matches!(
-                        last_spec.partial_cmp(spec),
-                        Some(Ordering::Greater)
-                    ) {
+                    if !matches!(last_spec.partial_cmp(spec), Some(Ordering::Greater)) {
                         return Err(FormatError::SpecifiersMustStepDecrease {
                             prev: last_spec.to_string(),
                             next: spec.to_string(),
@@ -194,13 +213,13 @@ impl<'fs, S: Scheme> Format<'fs, S> {
             } else {
                 // check if its escaped brackets, an unknown/unterminated specifier, or finally,
                 // just a literal.
-                let (literal, consume_len) = if format.starts_with('[') {
+                let (literal, consume_len) = if format.starts_with(&[b'[']) {
                     // determine if unknown or unterminated specifier. we technically don't need to
                     // error here: could just parse this as a literal because, above, we've already
                     // exhausted all known specifiers, but this helps the user.
-                    let mut next_chars = format.chars().skip(1);
+                    let mut next_chars = format.iter().skip(1);
                     let closing_index = next_chars
-                        .position(|c| c == ']')
+                        .position(|c| *c == b']')
                         .map(|index| {
                             // 1 for opening bracket that we skipped
                             index + 1
@@ -208,15 +227,19 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                         .ok_or_else(|| {
                             // didn't find closing bracket
                             FormatError::UnterminatedSpecifier {
-                                pattern: format.to_owned(),
+                                pattern: unsafe { std::str::from_utf8_unchecked(format) }
+                                    .to_string(),
                             }
                         })?;
                     // found closing, but unknown for this scheme
                     return Err(FormatError::UnacceptableSpecifier {
-                        spec: format[..closing_index + 1].to_owned(),
+                        spec: unsafe {
+                            std::str::from_utf8_unchecked(&format[..closing_index + 1])
+                        }
+                        .to_string(),
                         scheme_name: S::name(),
                     });
-                } else if format.starts_with(r"\[") {
+                } else if format.starts_with(b"\\[") {
                     // escaped opening bracket
                     (&format[1..2], 2)
                 } else {
@@ -225,8 +248,9 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     // gotta use chars() to find byte length to consume (for non-ascii, it's more
                     // than 1 byte). otherwise, rust complains we're splitting at a non-char
                     // boundary index
-                    let len_next_char = format.chars().next().unwrap().len_utf8();
-                    (&format[0..len_next_char], len_next_char)
+                    // let len_next_char = format.chars().next().unwrap().len_utf8();
+                    // (&format[0..len_next_char], len_next_char)
+                    (&format[0..1], 1)
                 };
 
                 // we can add this literal to the last token if it was also a literal.
@@ -238,10 +262,10 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     // contiguous memory and we know that the length of the underlying string is at
                     // least this long.
                     *last_literal = unsafe {
-                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                        std::slice::from_raw_parts(
                             last_literal.as_ptr(),              //same ptr
                             last_literal.len() + literal.len(), // new len
-                        ))
+                        )
                     };
                 } else {
                     tokens.push(FormatToken::Literal(literal));
@@ -344,11 +368,11 @@ mod tests {
         let sem_format = Sem::new_format(format_str);
         assert_eq!(
             Ok(vec![
-                FormatToken::Literal(first),
+                FormatToken::Literal(first.as_bytes()),
                 FormatToken::Specifier(&SEM_MAJOR),
-                FormatToken::Literal(middle),
+                FormatToken::Literal(middle.as_bytes()),
                 FormatToken::Specifier(&SEM_MINOR),
-                FormatToken::Literal(last),
+                FormatToken::Literal(last.as_bytes()),
             ]),
             sem_format.map(|f| f.tokens)
         );
@@ -362,11 +386,11 @@ mod tests {
         let sem_format = Cal::new_format(format_str);
         assert_eq!(
             Ok(vec![
-                FormatToken::Literal(first),
+                FormatToken::Literal(first.as_bytes()),
                 FormatToken::Specifier(&CAL_YEAR_FULL),
-                FormatToken::Literal(middle),
+                FormatToken::Literal(middle.as_bytes()),
                 FormatToken::Specifier(&CAL_MONTH_SHORT),
-                FormatToken::Literal(last),
+                FormatToken::Literal(last.as_bytes()),
             ]),
             sem_format.map(|f| f.tokens)
         );
@@ -380,11 +404,11 @@ mod tests {
         let sem_format = CalSem::new_format(format_str);
         assert_eq!(
             Ok(vec![
-                FormatToken::Literal(first),
+                FormatToken::Literal(first.as_bytes()),
                 FormatToken::Specifier(&CALSEM_YEAR_FULL),
-                FormatToken::Literal(middle),
+                FormatToken::Literal(middle.as_bytes()),
                 FormatToken::Specifier(&CALSEM_MINOR),
-                FormatToken::Literal(last),
+                FormatToken::Literal(last.as_bytes()),
             ]),
             sem_format.map(|f| f.tokens)
         );
@@ -755,7 +779,7 @@ mod tests {
         assert_eq!(
             Ok(vec![
                 FormatToken::Specifier(&CAL_YEAR_FULL),
-                FormatToken::Literal("[YYYY]"),
+                FormatToken::Literal(b"[YYYY]"),
             ])
             .as_ref(),
             actual.as_ref().map(|f| &f.tokens)

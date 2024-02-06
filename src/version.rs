@@ -2,11 +2,15 @@ use crate::{
     error::{DateError, VersionError},
     format::{Format, FormatToken},
     scheme::{Cal, CalSem, Scheme, Sem},
-    specifier::{CalSemIncrSpecifier, SemSpecifier, Specifier, StaticReferrableSpecifier},
+    specifier::{CalSemIncrSpecifier, NextArgument, ParseWidth, SemSpecifier, Specifier},
 };
 use chrono::{Local, NaiveDate, Utc};
 use core::fmt::{self, Display};
-use std::{ops::Deref, ptr, str::FromStr};
+use std::{
+    ops::Deref,
+    ptr,
+    str::{self, FromStr},
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VersionToken<'vs, S: Scheme> {
@@ -14,7 +18,7 @@ pub(crate) enum VersionToken<'vs, S: Scheme> {
         value: u32,
         spec: &'static S::Specifier,
     },
-    Literal(&'vs str),
+    Literal(&'vs [u8]),
 }
 
 impl<'vs, S: Scheme> Clone for VersionToken<'vs, S> {
@@ -36,7 +40,9 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
                 let rendered = spec.format_value(value);
                 write!(f, "{}", rendered)
             }
-            VersionToken::Literal(text) => write!(f, "{}", text),
+            VersionToken::Literal(text) => {
+                write!(f, "{}", unsafe { str::from_utf8_unchecked(text) })
+            }
         }
     }
 }
@@ -66,7 +72,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
                     spec: spec_b,
                 },
             ) => {
-                if spec_a.eq(spec_b) {
+                if ptr::eq(spec_a, spec_b) {
                     val_a.partial_cmp(val_b)
                 } else {
                     None
@@ -161,9 +167,14 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     /// - If the version string does not match the format string, returns a
     ///   [VersionError::VersionFormatMismatch].
     pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, VersionError> {
+        // Version::parse_with_regex(version_str.as_bytes(), format)
+        Version::parse_with_scanner(version_str.as_bytes(), format)
+    }
+
+    fn parse_with_regex(version_str: &'vs [u8], format: &Format<S>) -> Result<Self, VersionError> {
         let Some(captures) = format.get_regex().captures(version_str) else {
             return Err(VersionError::VersionFormatMismatch {
-                version_string: version_str.to_owned(),
+                version_string: unsafe { str::from_utf8_unchecked(version_str) }.to_owned(),
                 format_string: format.to_string(),
             });
         };
@@ -177,15 +188,17 @@ impl<'vs, S: Scheme> Version<'vs, S> {
             let Some(match_) = match_ else {
                 // would happen if the group was optional (e.g. `(\d)?`) and empty. we don't
                 // currently construct our format patterns this way, so this is almost certainly a
-                // bug. Plus we get a destructure on the Option
+                // bug.
                 panic!("unexpected empty version pattern group")
             };
 
-            let text = match_.as_str();
+            let text = match_.as_bytes();
 
             let token = match format_token {
                 FormatToken::Specifier(specifier) => {
-                    let value = specifier.parse_value_str(text);
+                    let value = unsafe { std::str::from_utf8_unchecked(text) }
+                        .parse()
+                        .unwrap();
                     VersionToken::Value {
                         value,
                         spec: *specifier,
@@ -194,7 +207,8 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                 FormatToken::Literal(format_text) => {
                     if !text.eq(*format_text) {
                         return Err(VersionError::VersionFormatMismatch {
-                            version_string: version_str.to_owned(),
+                            version_string: unsafe { std::str::from_utf8_unchecked(version_str) }
+                                .to_string(),
                             format_string: format.to_string(),
                         });
                     }
@@ -206,6 +220,139 @@ impl<'vs, S: Scheme> Version<'vs, S> {
         }
 
         Ok(Self { tokens })
+    }
+
+    fn parse_with_scanner(
+        version_str: &'vs [u8],
+        format: &Format<S>,
+    ) -> Result<Self, VersionError> {
+        Self::parse_rec(version_str, &format.tokens, &[])
+            .map(|tokens| Version::new(tokens))
+            .ok_or(VersionError::VersionFormatMismatch {
+                version_string: unsafe { str::from_utf8_unchecked(version_str) }.to_owned(),
+                format_string: format.to_string(),
+            })
+    }
+
+    fn parse_rec(
+        version_str: &'vs [u8],
+        fmt_tokens: &[FormatToken<S>],
+        ver_tokens: &[VersionToken<'vs, S>],
+    ) -> Option<Vec<VersionToken<'vs, S>>> {
+        if version_str.is_empty() && fmt_tokens.is_empty() {
+            return Some(ver_tokens.to_vec());
+        }
+
+        let first_fmt_token = fmt_tokens.first()?;
+
+        match first_fmt_token {
+            FormatToken::Literal(literal) => {
+                if version_str.starts_with(literal) {
+                    let mut new_ver_tokens = ver_tokens.to_vec();
+                    let (literal, version_str) = version_str.split_at(literal.len());
+                    new_ver_tokens.push(VersionToken::Literal(literal));
+                    Self::parse_rec(version_str, &fmt_tokens[1..], &new_ver_tokens)
+                } else {
+                    None
+                }
+            }
+            FormatToken::Specifier(specifier) => {
+                match specifier.parse_width() {
+                    ParseWidth::Two => {
+                        if version_str.len() < 2 {
+                            return None;
+                        }
+                        let (value_str, version_str) = version_str.split_at(2);
+                        if value_str.starts_with(b"0") && !specifier.can_be_zero() {
+                            return None;
+                        }
+                        let value = unsafe { std::str::from_utf8_unchecked(value_str) }
+                            .parse()
+                            .ok()?;
+                        if value == 0 && !specifier.can_be_zero() {
+                            return None;
+                        }
+                        let mut new_ver_tokens = ver_tokens.to_vec();
+                        new_ver_tokens.push(VersionToken::Value {
+                            value,
+                            spec: specifier,
+                        });
+                        let new_ver_tokens = new_ver_tokens;
+                        Self::parse_rec(
+                            version_str,
+                            &fmt_tokens[..fmt_tokens.len() - 1],
+                            &new_ver_tokens,
+                        )
+                    }
+                    ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => {
+                        let end = match specifier.parse_width() {
+                            ParseWidth::OneOrTwo => 2,
+                            ParseWidth::AtLeastOne => version_str.len(),
+                            _ => unreachable!(),
+                        };
+                        let mut value = 0u32;
+                        let mut continue_iterating = true;
+                        for i in 0..end {
+                            if !continue_iterating {
+                                break;
+                            }
+                            let next = version_str[i];
+                            if !next.is_ascii_digit() {
+                                return None; // can't be digit, so this'll never be valid
+                            }
+                            value = value * 10 + (next - b'0') as u32;
+
+                            if value == 0 {
+                                // cases:
+                                // - can be zero=true, zero-padded=true (0Y, WW)
+                                //   iterate to end
+                                //
+                                // - can be zero=true, zero-padded=false (MAJOR, MINOR, PATCH, YY, WW)
+                                //   if we encounter a zero first, try this iteration, but no subsequent
+                                //   if not zero, iterate to end
+                                //
+                                // - can be zero=false, zero-padded=true (0M, 0D)
+                                //   if we encounter a zero first, skip/continue until we find non-zero
+                                //   if not zero, iterate to end
+                                //
+                                // - can be zero=false, zero-padded=false (YYYY, MM, DD)
+                                //   if we encounter a zero first, return None
+                                //   if not zero, iterate to end
+                                match (specifier.can_be_zero(), specifier.zero_pad_len().is_some())
+                                {
+                                    (true, false) => {
+                                        // can be zero, but not zero-padded
+                                        continue_iterating = false;
+                                    }
+                                    (true, true) => {
+                                        // can be zero, and zero-padded
+                                        continue;
+                                    }
+                                    (false, false) => {
+                                        // can't be zero, and not zero-padded
+                                        return None;
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            let mut new_ver_tokens = ver_tokens.to_vec();
+                            new_ver_tokens.push(VersionToken::Value {
+                                value,
+                                spec: specifier,
+                            });
+                            if let Some(new_ver_tokens) = Self::parse_rec(
+                                &version_str[i + 1..],
+                                &fmt_tokens[1..],
+                                &new_ver_tokens,
+                            ) {
+                                return Some(new_ver_tokens);
+                            }
+                        }
+                        None
+                    }
+                }
+            }
+        }
     }
 
     fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionError>
@@ -287,17 +434,18 @@ impl<'vs> Version<'vs, Sem> {
     /// - Returns a [VersionError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
     pub fn next(&self, specifier: &SemSpecifier) -> Result<Self, VersionError> {
-        // track if the semantic level was found in the format string.
         let mut spec_found = false;
 
-        // track if we should increment or reset to 0
         let mut already_bumped = false;
 
-        let specifier = specifier.static_spec();
+        let spec_ref = specifier.as_static_spec_ref();
 
         let new_version = self.new_map_value_tokens(|(value, this_spec)| {
-            let new_value = if specifier >= this_spec {
-                if ptr::eq(specifier, this_spec) {
+            let new_value = if specifier.should_update(this_spec) {
+                // wow, if we tried to ptr::eq here, it fails on release profile (with opt-level >
+                // 0) this is certainly a bug! so for now, we'll just compare with == if
+                // ptr::eq(this_spec, spec_ref) {
+                if this_spec == spec_ref {
                     spec_found = true;
                 }
                 let incremented = this_spec.next(value, already_bumped);
@@ -311,7 +459,7 @@ impl<'vs> Version<'vs, Sem> {
 
         if !spec_found {
             return Err(VersionError::SemanticSpecifierNotInFormat {
-                spec: specifier.to_string(),
+                spec: spec_ref.to_string(),
             });
         }
 
@@ -360,7 +508,7 @@ impl FromStr for Date {
     /// Parses a date string into a [Date]. The string must be in the format `YYYY-MM-DD`, where
     /// `YYYY` is the year zero-padded to 4 digits, `MM` is the month zero-padded to 2 digits, and
     /// `DD` is the day zero-padded to 2 digits.
-    /// 
+    ///
     /// See [NaiveDate::from_str].
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(NaiveDate::from_str(s)?))
@@ -452,7 +600,7 @@ impl<'vs> Version<'vs, CalSem> {
     ) -> Result<Self, VersionError> {
         // this is like a combination Version<Cal>::update and Version<Sem>::increment
 
-        let semantic_specifier = semantic_specifier.static_spec();
+        let sem_spec_ref = semantic_specifier.as_static_spec_ref();
 
         // track if the semantic level was found in the format string.
         let mut spec_found = false;
@@ -471,15 +619,15 @@ impl<'vs> Version<'vs, CalSem> {
                 }
                 new_value
             } else {
-                if ptr::eq(semantic_specifier, spec) {
+                // wow, if we tried to ptr::eq here, it fails on release profile (with opt-level >
+                // 0) this is certainly a bug! so for now, we'll just compare with == if
+                // ptr::eq(spec, sem_spec_ref) {
+                if spec == sem_spec_ref {
                     spec_found = true;
                 }
-                if !cal_updated && semantic_specifier >= spec {
+                if !cal_updated && semantic_specifier.should_update(spec) {
                     let new_value = spec.next(date, old_value, already_bumped)?;
                     already_bumped = true;
-                    if semantic_specifier == spec {
-                        spec_found = true;
-                    }
                     new_value
                 } else {
                     *old_value
@@ -490,7 +638,7 @@ impl<'vs> Version<'vs, CalSem> {
 
         if !spec_found {
             return Err(VersionError::SemanticSpecifierNotInFormat {
-                spec: semantic_specifier.to_string(),
+                spec: sem_spec_ref.to_string(),
             });
         }
 
@@ -512,6 +660,30 @@ impl<'vs, S: Scheme> Display for Version<'vs, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lol() {
+        let format_str = "[MAJOR].[MINOR].[PATCH]";
+        let version_str = "5.1.12390";
+        let spec = SemSpecifier::Minor;
+        let next = Sem::next_string(format_str, version_str, &spec).unwrap();
+        dbg!(&next.to_string());
+    }
+
+    // #[test]
+    // fn lol2() {
+    //     let format_str = "[MAJOR].[MINOR].[PATCH]";
+    //     let version_str = "5.1.12390";
+    //     // let date = Date::explicit(2024, 1, 27).unwrap();
+    //     // let spec = CalSemIncrSpecifier::Minor;
+
+    //     let format = Sem::new_format(format_str).unwrap();
+    //     dbg!(&format);
+    //     let version = format.new_version(version_str).unwrap();
+    //     dbg!(&version.to_string());
+    //     let next = version.next(&SemSpecifier::Major).unwrap();
+    //     dbg!(&next.to_string());
+    // }
 
     #[test]
     fn test_major_minor_patch_parse() {
