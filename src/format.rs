@@ -142,7 +142,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
             let matched_spec =
                 S::Specifier::iter_all().find(|spec| format.starts_with(spec.format_pattern()));
 
-            let consume_len = if let Some(spec) = matched_spec {
+            let consume_len = if let Some(& spec) = matched_spec {
                 // check that specifiers are in order
                 if let Some(last_spec) = last_spec {
                     // if !(last_spec > spec) {
@@ -163,7 +163,7 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                     }
                 }
                 last_spec = Some(spec);
-                tokens.push(FormatToken::Specifier(*spec));
+                tokens.push(FormatToken::Specifier(spec));
                 spec.format_pattern().len()
             } else {
                 // check if its escaped brackets, an unknown/unterminated specifier, or finally,

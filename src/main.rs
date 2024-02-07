@@ -88,11 +88,11 @@ fn next(
     };
 
     let next_version = match scheme {
-        SchemeArg::Sem => Sem::next_string(format_str, version_str, &sem_spec()?)?,
+        SchemeArg::Sem => Sem::next_version_string(format_str, version_str, &sem_spec()?)?,
 
-        SchemeArg::Cal => Cal::next_string(format_str, version_str, date)?,
+        SchemeArg::Cal => Cal::next_version_string(format_str, version_str, date)?,
 
-        SchemeArg::CalSem => CalSem::next_string(format_str, version_str, date, &cal_sem_spec()?)?,
+        SchemeArg::CalSem => CalSem::next_version_string(format_str, version_str, date, &cal_sem_spec()?)?,
 
         SchemeArg::Guess => {
             if let Ok(sem_ver) = Sem::new_version(format_str, version_str) {

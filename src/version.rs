@@ -198,133 +198,86 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                 }
             }
             FormatToken::Specifier(specifier) => {
-                match specifier.parse_width() {
-                    ParseWidth::Two => {
-                        if version_str.len() < 2 {
-                            return None;
-                        }
-                        let tens_c = &version_str[0];
-                        let ones_c = &version_str[1];
-                        let version_str = &version_str[2..];
+                let min_width = match specifier.parse_width() {
+                    ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => 1,
+                    ParseWidth::AtLeastTwo | ParseWidth::Two => 2,
+                };
+                let max_width = match specifier.parse_width() {
+                    ParseWidth::OneOrTwo | ParseWidth::Two => 2.min(version_str.len()),
+                    ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => version_str.len(),
+                };
+                let mut value = 0u32;
+                let mut continue_iterating = true;
 
-                        let tens = tens_c.is_ascii_digit().then(|| (tens_c - b'0') as u32)?;
-                        let ones = ones_c.is_ascii_digit().then(|| (ones_c - b'0') as u32)?;
-
-                        let value = if tens == 0 {
-                            if ones == 0 {
-                                if !specifier.can_be_zero() {
-                                    return None;
-                                } else {
-                                    0
-                                }
-                            } else if specifier.zero_pad_len().is_none(){
-                                // 0x, where x is 1 through 9, and no zero-padding allowed
-                                return None;
-                            } else {
-                                ones
-                            }
-                        } else {
-                            tens * 10 + ones
-                        };
-                        let mut new_ver_tokens = ver_tokens.to_vec();
-                        new_ver_tokens.push(VersionToken::Value {
-                            value,
-                            spec: specifier,
-                        });
-                        let new_ver_tokens = new_ver_tokens;
-                        Self::parse_rec(
-                            version_str,
-                            &fmt_tokens[..fmt_tokens.len() - 1],
-                            &new_ver_tokens,
-                        )
+                for idx in 0..max_width {
+                    let next = version_str[idx];
+                    if !next.is_ascii_digit() {
+                        return None; // not digit, so this'll never be valid
                     }
-                    ParseWidth::OneOrTwo | ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => {
-                        let min_width = match specifier.parse_width() {
-                            ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => 1,
-                            ParseWidth::AtLeastTwo | ParseWidth::Two => 2,
-                        };
-                        let max_width = match specifier.parse_width() {
-                            ParseWidth::OneOrTwo | ParseWidth::Two => 2,
-                            ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => version_str.len(),
-                        };
-                        let mut value = 0u32;
-                        let mut continue_iterating = true;
-                        for idx in 0..max_width {
-                            if !continue_iterating {
-                                break;
-                            }
-                            let next = version_str[idx];
-                            if !next.is_ascii_digit() {
-                                return None; // can't be digit, so this'll never be valid
-                            }
-                            value = value * 10 + (next - b'0') as u32;
+                    value = value * 10 + (next - b'0') as u32;
 
-                            let cur_width = idx + 1;
-                            if cur_width < min_width {
+                    let cur_width = idx + 1;
+                    if cur_width < min_width {
+                        // keep going
+                        continue;
+                    }
+
+                    // cases:
+                    // - can be zero=true, zero-padded=true (0Y, 0W)
+                    //
+                    //   iterate to end normally
+                    //
+                    // - can be zero=true, zero-padded=false (MAJOR, MINOR, PATCH, YY,
+                    //   WW)
+                    //
+                    //   if we encounter a zero first, try this iteration, but no
+                    //   subsequent (set continue_iterating to false). else, iterate to
+                    //   end normally
+                    //
+                    // - can be zero=false, zero-padded=true (0M, 0D)
+                    //
+                    //   if we encounter a zero first, skip/continue until we find
+                    //   non-zero. else, iterate to end normally.
+                    //
+                    // - can be zero=false, zero-padded=false (YYYY, MM, DD)
+                    //
+                    //   if we encounter a zero first, return None. else, iterate to end
+                    //   normally
+                    if value == 0 {
+                        match (specifier.can_be_zero(), specifier.zero_pad_len().is_some()) {
+                            (true, true) => {
+                                // can be zero, and zero-padded: iterate to end normally
+                            }
+                            (true, false) => {
+                                // can be zero, and not zero-padded: just this iteration,
+                                // and no more
+                                continue_iterating = false;
+                            }
+                            (false, true) => {
+                                // can't be zero, and zero-padded: continue until non-zero
                                 continue;
                             }
-
-                            // cases:
-                            // - can be zero=true, zero-padded=true (0Y, 0W)
-                            //
-                            //   iterate to end normally
-                            //
-                            // - can be zero=true, zero-padded=false (MAJOR, MINOR, PATCH, YY,
-                            //   WW)
-                            //
-                            //   if we encounter a zero first, try this iteration, but no
-                            //   subsequent (set continue_iterating to false). else, iterate to
-                            //   end normally
-                            //
-                            // - can be zero=false, zero-padded=true (0M, 0D)
-                            //
-                            //   if we encounter a zero first, skip/continue until we find
-                            //   non-zero. else, iterate to end normally. NOTE: currently, 0M
-                            //   and 0D are the only specifiers with this quality, and they'd be
-                            //   handled by the ParseWidth::Two arm, but we keep it here for
-                            //   completeness.
-                            //
-                            // - can be zero=false, zero-padded=false (YYYY, MM, DD)
-                            //
-                            //   if we encounter a zero first, return None. else, iterate to end
-                            //   normally
-                            if value == 0 {
-                                match (specifier.can_be_zero(), specifier.zero_pad_len().is_some())
-                                {
-                                    (true, true) => {
-                                        // can be zero, and zero-padded: iterate to end normally
-                                    }
-                                    (true, false) => {
-                                        // can be zero, and not zero-padded: just this iteration,
-                                        // and no more
-                                        continue_iterating = false;
-                                    }
-                                    (false, true) => {
-                                        // can't be zero, and zero-padded: continue until non-zero
-                                        continue;
-                                    }
-                                    (false, false) => {
-                                        // can't be zero, and not zero-padded: return None
-                                        return None;
-                                    }
-                                }
-                            }
-                            let mut new_ver_tokens = ver_tokens.to_vec();
-                            new_ver_tokens.push(VersionToken::Value {
-                                value,
-                                spec: specifier,
-                            });
-                            if let Some(new_ver_tokens) = Self::parse_rec(
-                                &version_str[idx + 1..],
-                                &fmt_tokens[1..],
-                                &new_ver_tokens,
-                            ) {
-                                return Some(new_ver_tokens);
+                            (false, false) => {
+                                // can't be zero, and not zero-padded: return None
+                                return None;
                             }
                         }
-                        None
+                    }
+                    let mut new_ver_tokens = ver_tokens.to_vec();
+                    new_ver_tokens.push(VersionToken::Value {
+                        value,
+                        spec: specifier,
+                    });
+                    if let Some(new_ver_tokens) =
+                        Self::parse_rec(&version_str[idx + 1..], &fmt_tokens[1..], &new_ver_tokens)
+                    {
+                        return Some(new_ver_tokens);
+                    }
+                    if !continue_iterating {
+                        break;
                     }
                 }
+                None
             }
         }
     }
@@ -417,8 +370,9 @@ impl<'vs> Version<'vs, Sem> {
         let new_version = self.new_map_value_tokens(|(value, this_spec)| {
             let new_value = if specifier.should_update(this_spec) {
                 // wow, if we tried to ptr::eq here, it fails on release profile (with opt-level >
-                // 0) this is certainly a bug! so for now, we'll just compare with == if
-                // ptr::eq(this_spec, spec_ref) {
+                // 0) this is certainly a bug! so for now, we'll just compare with ==
+                //
+                // if ptr::eq(this_spec, spec_ref) {
                 if this_spec == spec_ref {
                     spec_found = true;
                 }
@@ -593,9 +547,10 @@ impl<'vs> Version<'vs, CalSem> {
                 }
                 new_value
             } else {
-                // wow, if we tried to ptr::eq here, it fails on release profile (with opt-level >
-                // 0) this is certainly a bug! so for now, we'll just compare with == if
-                // ptr::eq(spec, sem_spec_ref) {
+                // wow, if we tried to ptr::eq here, it fails on release profile (or specifically,
+                // opt-level > 0) this is certainly a bug! so for now, we'll just compare with ==
+                //
+                // if ptr::eq(spec, sem_spec_ref) {
                 if spec == sem_spec_ref {
                     spec_found = true;
                 }

@@ -130,7 +130,7 @@ impl Sem {
     ///
     /// This is a convenience method that creates a temporary [Version] with [Scheme::new_version],
     /// and increments it with [Version::next].
-    pub fn next_string(
+    pub fn next_version_string(
         format_str: &str,
         version_str: &str,
         specifier: &SemSpecifier,
@@ -172,7 +172,7 @@ impl Cal {
     ///
     /// This is a convenience method that creates a temporary [Version] with [Scheme::new_version],
     /// and increments it with [Version::next].
-    pub fn next_string(
+    pub fn next_version_string(
         format_str: &str,
         version_str: &str,
         date: &Date,
@@ -216,7 +216,7 @@ impl CalSem {
     ///
     /// This is a convenience method that creates a temporary [Version] with [Scheme::new_version],
     /// and increments it with [Version::next].
-    pub fn next_string(
+    pub fn next_version_string(
         format_str: &str,
         version_str: &str,
         date: &Date,

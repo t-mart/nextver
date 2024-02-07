@@ -58,7 +58,7 @@ fn bench_next_sem(c: &mut Criterion) {
     let version_str = "5.0.12390";
     let spec = SemSpecifier::Minor;
     c.bench_function("bench_next_sem", |b| {
-        b.iter(|| Sem::next_string(black_box(format_str), version_str, &spec).unwrap())
+        b.iter(|| Sem::next_version_string(black_box(format_str), version_str, &spec).unwrap())
     });
 }
 
@@ -67,7 +67,7 @@ fn bench_next_cal(c: &mut Criterion) {
     let version_str = "2020.47";
     let date = Date::explicit(2024, 1, 27).unwrap();
     c.bench_function("bench_next_cal", |b| {
-        b.iter(|| Cal::next_string(black_box(format_str), version_str, &date).unwrap())
+        b.iter(|| Cal::next_version_string(black_box(format_str), version_str, &date).unwrap())
     });
 }
 
@@ -77,7 +77,7 @@ fn bench_next_calsem(c: &mut Criterion) {
     let date = Date::explicit(2024, 1, 27).unwrap();
     let spec = CalSemIncrSpecifier::Minor;
     c.bench_function("bench_next_calsem", |b| {
-        b.iter(|| CalSem::next_string(black_box(format_str), version_str, &date, &spec).unwrap())
+        b.iter(|| CalSem::next_version_string(black_box(format_str), version_str, &date, &spec).unwrap())
     });
 }
 
