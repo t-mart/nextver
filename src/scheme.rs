@@ -1,8 +1,9 @@
 use crate::{
     error::{CompositeError, FormatError},
     format::Format,
-    specifier::{CalSemIncrSpecifier, CalSemSpecifier, CalSpecifier, SemSpecifier, Specifier},
+    specifier::{CalSemLevel, CalSemSpecifier, CalSpecifier, SemSpecifier, Specifier},
     version::{Date, Version},
+    SemLevel,
 };
 
 pub(crate) mod priv_trait {
@@ -16,8 +17,8 @@ pub(crate) mod priv_trait {
         /// The maximum number of specifiers that can be in a format_string. For a given scheme,
         /// this should equal the largest number of specifiers that can be in a valid format.
         ///
-        /// See [Scheme::token_capacity].
-        fn max_specifiers() -> usize;
+        /// See [Scheme::MAX_TOKENS].
+        const MAX_SPECIFIERS: usize;
 
         /// The maximum number of tokens that can be in a [Format] or [Version]. To account for
         /// literals being around the specifiers, this is equal to the maximum number of specifiers
@@ -25,10 +26,8 @@ pub(crate) mod priv_trait {
         ///
         /// This is useful for pre-allocating a vector to hold the tokens.
         ///
-        /// See [Scheme::max_specifiers].
-        fn max_tokens() -> usize {
-            Self::max_specifiers() * 2 + 1
-        }
+        /// See [Scheme::MAX_SPECIFIERS].
+        const MAX_TOKENS: usize = Self::MAX_SPECIFIERS * 2 + 1;
 
         /// The specifiers that can be used as the first specifier in a format string, comma
         /// separated, for use in error messages.
@@ -43,31 +42,18 @@ pub(crate) mod priv_trait {
         }
     }
 
-    // fn arr_to_english_or(specs: &[&impl Specifier]) -> String {
     fn arr_to_english_or(specs: &'static [&'static impl SpecifierT]) -> String {
-        let backtick = |s: &str| format!("`{}`", s);
         let spec_strings = specs
             .iter()
-            .map(|spec| spec.to_string())
+            .map(|spec| format!("`{spec}`"))
             .collect::<Vec<_>>();
-        match spec_strings.len() {
-            0 => String::new(),
-            1 => backtick(&spec_strings[0]),
-            2 => format!(
-                "{} or {}",
-                backtick(&spec_strings[0]),
-                backtick(&spec_strings[1])
-            ),
-            _ => {
-                let mut joined = spec_strings[..spec_strings.len() - 1]
-                    .iter()
-                    .map(|s| backtick(s))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                joined.push_str(&format!(
-                    ", or {}",
-                    backtick(&spec_strings[spec_strings.len() - 1])
-                ));
+        match spec_strings.as_slice() {
+            [] => String::new(),
+            [a] => a.to_string(),
+            [a, b] => format!("{a} or {b}"),
+            [firsts @ .., last] => {
+                let mut joined = firsts.join(", ");
+                joined.push_str(&format!(", or {}", last));
                 joined
             }
         }
@@ -118,7 +104,7 @@ pub trait Scheme: priv_trait::Scheme {
     }
 }
 
-/// Scheme for formats that have only semantic specifiers, such as `[MAJOR].[MINOR].[PATCH]`.
+/// Scheme for formats that have only semantic specifiers, such as `<MAJOR>.<MINOR>.<PATCH>`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Sem;
 
@@ -133,10 +119,10 @@ impl Sem {
     pub fn next_version_string(
         format_str: &str,
         version_str: &str,
-        specifier: &SemSpecifier,
+        level: &SemLevel,
     ) -> Result<String, CompositeError> {
         let version = Self::new_version(format_str, version_str)?;
-        let next_version = version.next(specifier)?;
+        let next_version = version.next(level)?;
         Ok(next_version.to_string())
     }
 }
@@ -150,17 +136,15 @@ impl Scheme for Sem {
 impl priv_trait::Scheme for Sem {
     type Specifier = SemSpecifier;
 
-    fn max_specifiers() -> usize {
-        // longest exemplar is [MAJOR][MINOR][PATCH]
-        3
-    }
+    // longest exemplar is <MAJOR><MINOR><PATCH>
+    const MAX_SPECIFIERS: usize = 3;
 }
 
-/// Scheme for formats that have only calendar specifiers, such as `[YYYY].[MM].[DD]`.
+/// Scheme for formats that have only calendar specifiers, such as `<YYYY>.<MM>.<DD>`.
 ///
 /// This scheme is less useful than [CalSem] because there is no way to increment it twice in the
 /// same period of its least significant specifier. For example, a version with format
-/// `[YYYY].[MM].[DD]` can only be incremented/updated once per day.
+/// `<YYYY>.<MM>.<DD>` can only be incremented/updated once per day.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Cal;
 
@@ -193,14 +177,12 @@ impl Scheme for Cal {
 impl priv_trait::Scheme for Cal {
     type Specifier = CalSpecifier;
 
-    fn max_specifiers() -> usize {
-        // longest exemplar is [YYYY][MM][DD]
-        3
-    }
+    // longest exemplar is <YYYY><MM><DD>
+    const MAX_SPECIFIERS: usize = 3;
 }
 
 /// Scheme for formats that have both calendar and semantic specifiers, such as
-/// `[YYYY].[MM].[DD].[PATCH]`.
+/// `<YYYY>.<MM>.<DD>.<PATCH>`.
 ///
 /// You would have such a format if you want to be able to increase
 /// your version multiple times within the period of your smallest calendar specifier, such a
@@ -220,11 +202,11 @@ impl CalSem {
         format_str: &str,
         version_str: &str,
         date: &Date,
-        semantic_specifier: &CalSemIncrSpecifier,
+        level: &CalSemLevel,
     ) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
-        let next_version = version.next(date, semantic_specifier)?;
+        let next_version = version.next(date, level)?;
         Ok(next_version.to_string())
     }
 }
@@ -238,8 +220,6 @@ impl Scheme for CalSem {
 impl priv_trait::Scheme for CalSem {
     type Specifier = CalSemSpecifier;
 
-    fn max_specifiers() -> usize {
-        // longest exemplar is [YYYY][MM][DD][MINOR][PATCH]
-        5
-    }
+    // longest exemplar is <YYYY><MM><DD><MINOR><PATCH>
+    const MAX_SPECIFIERS: usize = 5;
 }

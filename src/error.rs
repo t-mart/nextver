@@ -95,9 +95,9 @@ pub enum FormatError {
     ///
     /// # Examples
     ///
-    /// - `[MAJOR][MAJOR]`: not decreasing
-    /// - `[MAJOR][MINOR][PATCH][MINOR]`: last minor does not decrease     
-    /// - `[YYYY][DD]`: decreasing by more than one step (days are only relative to months)
+    /// - `<MAJOR><MAJOR>`: not decreasing
+    /// - `<MAJOR><MINOR><PATCH><MINOR>`: last minor does not decrease     
+    /// - `<YYYY><DD>`: decreasing by more than one step (days are only relative to months)
     #[error("specifiers must step decrease by their significance, got `{next}` after `{prev}`")]
     SpecifiersMustStepDecrease {
         /// The first specifier

@@ -2,7 +2,8 @@ use crate::{
     error::{DateError, VersionError},
     format::{Format, FormatToken},
     scheme::{Cal, CalSem, Scheme, Sem},
-    specifier::{CalSemIncrSpecifier, NextArgument, ParseWidth, SemSpecifier, Specifier},
+    specifier::{CalSemLevel, Level, ParseWidth, SpecValue, SpecValueResult, Specifier},
+    SemLevel,
 };
 use chrono::{Local, NaiveDate, Utc};
 use core::{
@@ -15,7 +16,7 @@ use core::{
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VersionToken<'vs, S: Scheme> {
     Value {
-        value: u32,
+        value: SpecValue,
         spec: &'static S::Specifier,
     },
     Literal(&'vs [u8]),
@@ -37,17 +38,20 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VersionToken::Value { value, spec } => {
-                let rendered = spec.format_value(value);
-                write!(f, "{}", rendered)
+                let formatted = spec.format_value(value);
+                f.write_str(&formatted)
             }
             VersionToken::Literal(text) => {
-                write!(f, "{}", unsafe { str::from_utf8_unchecked(text) })
+                let text_str = unsafe { str::from_utf8_unchecked(text) };
+                f.write_str(text_str)
             }
         }
     }
 }
 
 impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
+    /// Compares two version tokens. This is only a partial ordering it is only meaningful to
+    /// compare two version tokens when they come from the equivalent formats.
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         // it only makes sense to compare values if they are the same type, thus, only a partial
         // ordering.
@@ -72,7 +76,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
                     spec: spec_b,
                 },
             ) => {
-                if ptr::eq(spec_a, spec_b) {
+                if ptr::eq(*spec_a, *spec_b) {
                     val_a.partial_cmp(val_b)
                 } else {
                     None
@@ -80,6 +84,27 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
             }
 
             _ => None,
+        }
+    }
+}
+
+/// Just like a [FormatToken], but holds the literal text unescaped, so it can be quickly matched
+/// against a version string (instead of having to recompute the unescaped text each time).
+enum UnescapedFormatToken<S: Scheme> {
+    Specifier(&'static S::Specifier),
+    Literal(String),
+}
+
+impl<'fs, S: Scheme> From<&FormatToken<'fs, S>> for UnescapedFormatToken<S> {
+    fn from(token: &FormatToken<'fs, S>) -> Self {
+        match token {
+            FormatToken::Specifier(spec) => UnescapedFormatToken::Specifier(*spec),
+            FormatToken::Literal(literal) => {
+                let unescaped = unsafe { std::str::from_utf8_unchecked(literal) }
+                    .replace("<<", "<")
+                    .replace(">>", ">");
+                UnescapedFormatToken::Literal(unescaped)
+            }
         }
     }
 }
@@ -101,7 +126,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
 /// ```
 /// use nextver::prelude::*;
 ///
-/// let cur = Sem::new_version("[MAJOR].[MINOR].[PATCH]", "1.2.3").unwrap();
+/// let cur = Sem::new_version("<MAJOR>.<MINOR>.<PATCH>", "1.2.3").unwrap();
 /// let next = version.next(Some(&SemSpecifier::Minor)).unwrap();
 /// assert_eq!("1.3.0", incremented.to_string());
 /// assert!(cur < next);
@@ -112,7 +137,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
 /// ```
 /// use nextver::prelude::*;
 ///
-/// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
+/// let format = Format::parse("<MAJOR>.<MINOR>.<PATCH>").unwrap();
 /// let version = Version::parse("1.2.3", format.clone());
 /// assert!(version.is_ok());
 /// ```
@@ -123,7 +148,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
 /// use nextver::{Version, SemanticLevel, Date};
 ///
 /// // Mix and match specifiers
-/// let version = Version::from_parsed_format("[YYYY].[PATCH]", "2023.123").unwrap();
+/// let version = Version::from_parsed_format("<YYYY>.<PATCH>", "2023.123").unwrap();
 ///
 /// // Increment by semantic level
 /// let incremented = version.increment(Some(&SemanticLevel::Patch), None).unwrap();
@@ -167,7 +192,9 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     /// - If the version string does not match the format string, returns a
     ///   [VersionError::VersionFormatMismatch].
     pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, VersionError> {
-        Self::parse_rec(version_str.as_bytes(), &format.tokens, &[])
+        let unescaped_format_tokens: Vec<UnescapedFormatToken<S>> =
+            format.tokens.iter().map(|t| t.into()).collect();
+        Self::parse_rec(version_str.as_bytes(), &unescaped_format_tokens, &[])
             .map(|tokens| Version::new(tokens))
             .ok_or(VersionError::VersionFormatMismatch {
                 version_string: version_str.to_owned(),
@@ -177,7 +204,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
 
     fn parse_rec(
         version_str: &'vs [u8],
-        fmt_tokens: &[FormatToken<S>],
+        fmt_tokens: &[UnescapedFormatToken<S>],
         ver_tokens: &[VersionToken<'vs, S>],
     ) -> Option<Vec<VersionToken<'vs, S>>> {
         if version_str.is_empty() && fmt_tokens.is_empty() {
@@ -187,8 +214,8 @@ impl<'vs, S: Scheme> Version<'vs, S> {
         let first_fmt_token = fmt_tokens.first()?;
 
         match first_fmt_token {
-            FormatToken::Literal(literal) => {
-                if version_str.starts_with(literal) {
+            UnescapedFormatToken::Literal(literal) => {
+                if version_str.starts_with(literal.as_bytes()) {
                     let mut new_ver_tokens = ver_tokens.to_vec();
                     let (literal, version_str) = version_str.split_at(literal.len());
                     new_ver_tokens.push(VersionToken::Literal(literal));
@@ -197,7 +224,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     None
                 }
             }
-            FormatToken::Specifier(specifier) => {
+            UnescapedFormatToken::Specifier(specifier) => {
                 let min_width = match specifier.parse_width() {
                     ParseWidth::OneOrTwo | ParseWidth::AtLeastOne => 1,
                     ParseWidth::AtLeastTwo | ParseWidth::Two => 2,
@@ -206,7 +233,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     ParseWidth::OneOrTwo | ParseWidth::Two => 2.min(version_str.len()),
                     ParseWidth::AtLeastOne | ParseWidth::AtLeastTwo => version_str.len(),
                 };
-                let mut value = 0u32;
+                let mut value: SpecValue = 0;
                 let mut continue_iterating = true;
 
                 for idx in 0..max_width {
@@ -214,7 +241,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     if !next.is_ascii_digit() {
                         return None; // not digit, so this'll never be valid
                     }
-                    value = value * 10 + (next - b'0') as u32;
+                    value = value * 10 + (next - b'0') as SpecValue;
 
                     let cur_width = idx + 1;
                     if cur_width < min_width {
@@ -284,7 +311,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
 
     fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, VersionError>
     where
-        F: FnMut((&u32, &S::Specifier)) -> Result<u32, VersionError>,
+        F: FnMut((&SpecValue, &S::Specifier)) -> SpecValueResult,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
@@ -318,7 +345,7 @@ impl<'vs, S: Scheme> PartialOrd for Version<'vs, S> {
     ///   value.
     /// - For two given literal tokens, the text is not the same.
     /// - For two given value tokens, they are not of the same specifier type. E.g., one is a
-    ///  `[YYYY]` value, one is a `[YY]` value.
+    ///  `<YYYY>` value, one is a `<YY>` value.
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         if self.tokens.len() != other.tokens.len() {
             None
@@ -327,6 +354,9 @@ impl<'vs, S: Scheme> PartialOrd for Version<'vs, S> {
         }
     }
 }
+
+// TODO: I hate that Sem::next takes a SemSpecifier, but CalSem::next takes a CalSemIncrSpecifier.
+// Figure out how to better name/architect these things.
 
 impl<'vs> Version<'vs, Sem> {
     /// Returns a new version where the semantic value of the given [SemanticLevel] is incremented,
@@ -345,7 +375,7 @@ impl<'vs> Version<'vs, Sem> {
     /// ```
     /// use nextver::{Format, SemanticLevel, Version};
     ///
-    /// let format = Format::parse("[MAJOR].[MINOR].[PATCH]").unwrap();
+    /// let format = Format::parse("<MAJOR>.<MINOR>.<PATCH>").unwrap();
     /// let version = Version::parse("1.2.3", format).unwrap();
     /// let new_version = version.increment(&SemanticLevel::Major).unwrap();
     /// assert_eq!("2.0.0", new_version.to_string());
@@ -360,34 +390,21 @@ impl<'vs> Version<'vs, Sem> {
     ///
     /// - Returns a [VersionError::SemanticLevelSpecifierNotInFormat] if `specifier` is not in
     ///   format.
-    pub fn next(&self, specifier: &SemSpecifier) -> Result<Self, VersionError> {
+    pub fn next(&self, level: &SemLevel) -> Result<Self, VersionError> {
         let mut spec_found = false;
+        let level_spec = level.spec();
 
-        let mut already_bumped = false;
-
-        let spec_ref = specifier.as_static_spec_ref();
-
-        let new_version = self.new_map_value_tokens(|(value, this_spec)| {
-            let new_value = if specifier.should_update(this_spec) {
-                // wow, if we tried to ptr::eq here, it fails on release profile (with opt-level >
-                // 0) this is certainly a bug! so for now, we'll just compare with ==
-                //
-                // if ptr::eq(this_spec, spec_ref) {
-                if this_spec == spec_ref {
-                    spec_found = true;
-                }
-                let incremented = this_spec.next(value, already_bumped);
-                already_bumped = true;
-                incremented
-            } else {
-                *value
+        let new_version = self.new_map_value_tokens(|(old_value, this_spec)| {
+            if level_spec == this_spec {
+                spec_found = true;
             };
+            let new_value = this_spec.next_value(old_value, level);
             Ok(new_value)
         })?;
 
         if !spec_found {
             return Err(VersionError::SemanticSpecifierNotInFormat {
-                spec: spec_ref.to_string(),
+                spec: level_spec.to_string(),
             });
         }
 
@@ -470,7 +487,7 @@ impl<'vs> Version<'vs, Cal> {
     /// ```
     /// use nextver::{Format, Date, Version};
     ///
-    /// let format = Format::parse("[YYYY].[0M].[0D]").unwrap();
+    /// let format = Format::parse("<YYYY>.<0M>.<0D>").unwrap();
     /// let version = Version::parse("2023.12.04", format).unwrap();
     /// let new_version = version.update(&Date::Explicit{year: 2024, month: 1, day: 2}).unwrap();
     /// assert_eq!("2024.01.02", new_version.to_string());
@@ -484,11 +501,11 @@ impl<'vs> Version<'vs, Cal> {
     ///
     ///  - Returns a [VersionError::NegativeYearValue]...
     ///
-    ///    - If the `date` provided is before year 0 and this version's format uses the `[YYYY]`
+    ///    - If the `date` provided is before year 0 and this version's format uses the `<YYYY>`
     ///      specifier.
     ///
     ///    - If the `date` provided is before the year 2000 and this version's format uses the
-    ///      `[YY]` or `[0Y]` specifiers.
+    ///      `<YY>` or `<0Y>` specifiers.
     ///
     ///    This is because the formatted values would be negative, which would affect parsing. [See
     ///    specifiers for more](struct.Format.html#specifier-table).
@@ -498,7 +515,7 @@ impl<'vs> Version<'vs, Cal> {
 
         let new_version = self.new_map_value_tokens(|(old_value, this_spec)| {
             let new_value = {
-                let updated = this_spec.next(date)?;
+                let updated = this_spec.next_value(date)?;
                 if updated != *old_value {
                     cal_updated = true;
                 }
@@ -521,53 +538,39 @@ impl<'vs> Version<'vs, CalSem> {
     /// given [CalSemSemanticSpecifier].
     ///
     /// TODO: fill out rest of this doc
-    pub fn next(
-        &self,
-        date: &Date,
-        semantic_specifier: &CalSemIncrSpecifier,
-    ) -> Result<Self, VersionError> {
-        // this is like a combination Version<Cal>::update and Version<Sem>::increment
-
-        let sem_spec_ref = semantic_specifier.as_static_spec_ref();
-
+    pub fn next(&self, date: &Date, level: &CalSemLevel) -> Result<Self, VersionError> {
         // track if the semantic level was found in the format string.
-        let mut spec_found = false;
+        let mut sem_spec_found = false;
+        let level_spec = level.spec();
 
-        // track if we should increment or reset to 0
-        let mut already_bumped = false;
-
-        // track if the calendar was updated, so we can return NoCalendarChange if it wasn't.
+        // track if the calendar was updated, so we know if we need to do semantic updates
         let mut cal_updated = false;
 
-        let new_version = self.new_map_value_tokens(|(old_value, spec)| {
-            let new_value = if spec.is_cal() {
-                let new_value = spec.next(date, old_value, already_bumped)?;
+        let new_version = self.new_map_value_tokens(|(old_value, this_spec)| {
+            let new_value = if this_spec.is_cal() {
+                let new_value = this_spec.next_value(old_value, date, level)?;
                 if new_value != *old_value {
                     cal_updated = true;
                 }
                 new_value
             } else {
-                // wow, if we tried to ptr::eq here, it fails on release profile (or specifically,
-                // opt-level > 0) this is certainly a bug! so for now, we'll just compare with ==
-                //
-                // if ptr::eq(spec, sem_spec_ref) {
-                if spec == sem_spec_ref {
-                    spec_found = true;
+                // level_spec can only possibly be equal for non-cal, so check only in this branch
+                if level_spec == this_spec {
+                    sem_spec_found = true;
                 }
-                if !cal_updated && semantic_specifier.should_update(spec) {
-                    let new_value = spec.next(date, old_value, already_bumped)?;
-                    already_bumped = true;
-                    new_value
+                if !cal_updated {
+                    this_spec.next_value(old_value, date, level)?
                 } else {
                     *old_value
                 }
             };
+
             Ok(new_value)
         })?;
 
-        if !spec_found {
+        if !sem_spec_found {
             return Err(VersionError::SemanticSpecifierNotInFormat {
-                spec: sem_spec_ref.to_string(),
+                spec: level_spec.to_string(),
             });
         }
 
@@ -602,7 +605,7 @@ mod tests {
         ];
 
         for (version_str, passes) in &version_strs {
-            let format = Sem::new_format("[MAJOR].[MINOR].[PATCH]").unwrap();
+            let format = Sem::new_format("<MAJOR>.<MINOR>.<PATCH>").unwrap();
             let version = Version::parse(version_str, &format);
             if *passes {
                 assert!(version.is_ok());
@@ -618,7 +621,7 @@ mod tests {
     /// test full year
     #[test]
     fn test_full_year_parse() {
-        let format_str = "[YYYY]";
+        let format_str = "<YYYY>";
         let args = [
             ("01", false),  // zero-padding disallowed
             ("001", false), // zero-padding disallowed
@@ -645,7 +648,7 @@ mod tests {
     /// test short year
     #[test]
     fn test_short_year_parse() {
-        let format_str = "[YY]";
+        let format_str = "<YY>";
         let args = [
             ("01", false),  // zero-padding disallowed
             ("001", false), // zero-padding disallowed
@@ -672,7 +675,7 @@ mod tests {
     /// test zero-padded year
     #[test]
     fn test_zp_year_parse() {
-        let format_str = "[0Y]";
+        let format_str = "<0Y>";
         let args = [
             ("0", false), // must be 2-digits
             ("1", false), // must be 2-digits
@@ -700,12 +703,12 @@ mod tests {
     #[test]
     fn test_zp_week_parse() {
         let args = [
-            ("[YYYY].[0W]", "2024.0", false),   // must be two-digit
-            ("[YYYY].[0W]", "2024.122", false), // must be two-digit
-            ("[YYYY].[0W]", "2024.00", true),   // there is a week zero
-            ("[YYYY].[0W]", "2024.01", true),
-            ("[YYYY].[0W]", "2024.10", true),
-            ("[YYYY].[0W]", "2024.12", true),
+            ("<YYYY>.<0W>", "2024.0", false),   // must be two-digit
+            ("<YYYY>.<0W>", "2024.122", false), // must be two-digit
+            ("<YYYY>.<0W>", "2024.00", true),   // there is a week zero
+            ("<YYYY>.<0W>", "2024.01", true),
+            ("<YYYY>.<0W>", "2024.10", true),
+            ("<YYYY>.<0W>", "2024.12", true),
         ];
 
         for (format_str, version_str, passes) in &args {
@@ -726,12 +729,12 @@ mod tests {
     #[test]
     fn test_short_week_parse() {
         let args = [
-            ("[YYYY].[WW]", "2024.01", false),  // zero-padding disallowed
-            ("[YYYY].[WW]", "2024.00", false),  // zero-padding disallowed
-            ("[YYYY].[WW]", "2024.122", false), // must be two-digit
-            ("[YYYY].[WW]", "2024.0", true),
-            ("[YYYY].[WW]", "2024.10", true),
-            ("[YYYY].[WW]", "2024.12", true),
+            ("<YYYY>.<WW>", "2024.01", false),  // zero-padding disallowed
+            ("<YYYY>.<WW>", "2024.00", false),  // zero-padding disallowed
+            ("<YYYY>.<WW>", "2024.122", false), // must be two-digit
+            ("<YYYY>.<WW>", "2024.0", true),
+            ("<YYYY>.<WW>", "2024.10", true),
+            ("<YYYY>.<WW>", "2024.12", true),
         ];
 
         for (format_str, version_str, passes) in &args {
@@ -753,19 +756,19 @@ mod tests {
     fn test_zp_month_day_parse() {
         let args = [
             // month
-            ("[YYYY].[0M]", "2024.0", false),   // must be two-digit
-            ("[YYYY].[0M]", "2024.00", false),  // no month 0
-            ("[YYYY].[0M]", "2024.122", false), // must be two-digit
-            ("[YYYY].[0M]", "2024.01", true),
-            ("[YYYY].[0M]", "2024.10", true),
-            ("[YYYY].[0M]", "2024.12", true),
+            ("<YYYY>.<0M>", "2024.0", false),   // must be two-digit
+            ("<YYYY>.<0M>", "2024.00", false),  // no month 0
+            ("<YYYY>.<0M>", "2024.122", false), // must be two-digit
+            ("<YYYY>.<0M>", "2024.01", true),
+            ("<YYYY>.<0M>", "2024.10", true),
+            ("<YYYY>.<0M>", "2024.12", true),
             // day
-            ("[YYYY].[MM].[0D]", "2024.1.0", false), // must be two-digit
-            ("[YYYY].[MM].[0D]", "2024.1.00", false), // no day 0
-            ("[YYYY].[MM].[0D]", "2024.1.122", false), // must be two-digit
-            ("[YYYY].[MM].[0D]", "2024.1.01", true),
-            ("[YYYY].[MM].[0D]", "2024.1.10", true),
-            ("[YYYY].[MM].[0D]", "2024.1.12", true),
+            ("<YYYY>.<MM>.<0D>", "2024.1.0", false), // must be two-digit
+            ("<YYYY>.<MM>.<0D>", "2024.1.00", false), // no day 0
+            ("<YYYY>.<MM>.<0D>", "2024.1.122", false), // must be two-digit
+            ("<YYYY>.<MM>.<0D>", "2024.1.01", true),
+            ("<YYYY>.<MM>.<0D>", "2024.1.10", true),
+            ("<YYYY>.<MM>.<0D>", "2024.1.12", true),
         ];
 
         for (format_str, version_str, passes) in &args {
@@ -787,21 +790,21 @@ mod tests {
     fn test_short_mdw_parse() {
         let args = [
             // month
-            ("[YYYY].[MM]", "2024.0", false),   // no month 0
-            ("[YYYY].[MM]", "2024.00", false),  // zero-padding disallowed
-            ("[YYYY].[MM]", "2024.01", false),  // zero-padding disallowed
-            ("[YYYY].[MM]", "2024.122", false), // must be two-digit
-            ("[YYYY].[MM]", "2024.1", true),
-            ("[YYYY].[MM]", "2024.10", true),
-            ("[YYYY].[MM]", "2024.12", true),
+            ("<YYYY>.<MM>", "2024.0", false),   // no month 0
+            ("<YYYY>.<MM>", "2024.00", false),  // zero-padding disallowed
+            ("<YYYY>.<MM>", "2024.01", false),  // zero-padding disallowed
+            ("<YYYY>.<MM>", "2024.122", false), // must be two-digit
+            ("<YYYY>.<MM>", "2024.1", true),
+            ("<YYYY>.<MM>", "2024.10", true),
+            ("<YYYY>.<MM>", "2024.12", true),
             // day
-            ("[YYYY].[MM].[DD]", "2024.1.0", false), // no month 0
-            ("[YYYY].[MM].[DD]", "2024.1.00", false), // zero-padding disallowed
-            ("[YYYY].[MM].[DD]", "2024.1.01", false), // zero-padding disallowed
-            ("[YYYY].[MM].[DD]", "2024.1.122", false), // must be two-digit
-            ("[YYYY].[MM].[DD]", "2024.1.1", true),
-            ("[YYYY].[MM].[DD]", "2024.1.10", true),
-            ("[YYYY].[MM].[DD]", "2024.1.12", true),
+            ("<YYYY>.<MM>.<DD>", "2024.1.0", false), // no month 0
+            ("<YYYY>.<MM>.<DD>", "2024.1.00", false), // zero-padding disallowed
+            ("<YYYY>.<MM>.<DD>", "2024.1.01", false), // zero-padding disallowed
+            ("<YYYY>.<MM>.<DD>", "2024.1.122", false), // must be two-digit
+            ("<YYYY>.<MM>.<DD>", "2024.1.1", true),
+            ("<YYYY>.<MM>.<DD>", "2024.1.10", true),
+            ("<YYYY>.<MM>.<DD>", "2024.1.12", true),
         ];
 
         for (format_str, version_str, passes) in &args {
@@ -820,7 +823,7 @@ mod tests {
 
     #[test]
     fn test_unicode_literal() {
-        let format_str = "👍[MAJOR]👯‍♀️";
+        let format_str = "👍<MAJOR>👯‍♀️";
         let version_str = "👍1👯‍♀️";
         let format = Sem::new_format(format_str).unwrap();
         let version = Version::parse(version_str, &format);

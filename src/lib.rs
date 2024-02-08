@@ -16,14 +16,14 @@
 //! use nextver::prelude::*;
 //!
 //! let next = Sem::next(
-//!   "[MAJOR].[MINOR].[PATCH]",  // format string
+//!   "<MAJOR>.<MINOR>.<PATCH>",  // format string
 //!   "1.2.3",                    // current version string
 //!   &SemanticSpecifier::Minor   // the specifier to increment
 //! ).unwrap();
 //! assert_eq!(next, "1.3.0");
 //!
 //! let next = CalSem::next(
-//!   "[YYYY].[0M]-[PATCH]",          // format string
+//!   "<YYYY>.<0M>-<PATCH>",          // format string
 //!   "2023.12-42",                   // current version string
 //!   &"2024-01-02".parse().unwrap(), // the date to update to, or simply `Date::UtcNow`/`Date::LocalNow`
 //!   &CalSemSpecifier::Patch         // the specifier to increment, if no calendar update would occur
@@ -37,7 +37,7 @@
 //! ```
 //! use nextver::prelude::*;
 //!
-//! let format = CalSem::new_format("[YYYY].[MM].[PATCH]").unwrap();
+//! let format = CalSem::new_format("<YYYY>.<MM>.<PATCH>").unwrap();
 //! let version = format.parse_version("2023.12.42").unwrap();
 //! let next = version.next(&"2024-01-02".parse().unwrap(), &CalSemSpecifier::Patch).unwrap();
 //! assert!(next > version);
@@ -58,14 +58,14 @@
 //! nextver defines three versioning schemes:
 //!
 //! - [`Sem`]: Only semantic specifiers. For flexibility, it is a superset of
-//!   [SemVer](https://semver.org/) in that it allows the omission of `[MINOR]` and `[PATCH]`
+//!   [SemVer](https://semver.org/) in that it allows the omission of `<MINOR>` and `<PATCH>`
 //!   specifiers.
 //! - [`CalSem`]: Calendar specifiers followed by semantic ones. It's similar to
 //!   [CalVer](https://calver.org/) but with some clarifications. See its documentation for more
 //!   details.
 //! - [`Cal`]: Only calendar specifiers. This one is probably less useful because there is no way to
 //!   increment it twice in the same period of its least significant specifier. For example, a
-//!   version with format `[YYYY].[MM].[DD]` can only be incremented/updated once per day.
+//!   version with format `<YYYY>.<MM>.<DD>` can only be incremented/updated once per day.
 //!
 //!
 //! ## Specifiers
@@ -77,18 +77,18 @@
 //!
 //! | Specifier | Example | Type | Sem | CalSem | Cal | [Greedy?](#greedy-specifiers) | Description | Reference |
 //! |---|---|---|---|---|---|---|---|---|
-//! | `[MAJOR]` | `1` | Semantic - Major | ✅ | ❌ | ❌ | **Yes** | The major part of a version | [1] |
-//! | `[MINOR]` | `2` | Semantic - Minor | ✅ | ✅ | ❌ | **Yes** | The minor part of a version | [1] |
-//! | `[PATCH]` | `3` | Semantic - Patch | ✅ | ✅ | ❌ | **Yes** | The patch part of a version | [1] |
-//! | `[YYYY]` | `2001` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Full year. This will be at least 1 digit (e.g. year `1` or year `10000`). We do not support BCE years for this specifier. | [2] |
-//! | `[YY]` | `1` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | The last two digits of the year (for years <= `2099`). In general, this is the same as `year - 2000` so that, for example, years `2001`, `2101`, ... `3001` are disambiguated. We do not support years less than `2000` for this specifier. | [2] |
-//! | `[0Y]` | `01` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Same as `YY` but zero-padded to at least 2 characters. | [2] |
-//! | `[MM]` | `1` | Calendar - Month | ❌ | ✅ | ✅ | **Yes** | Month (`1`–`12`). | [2] |
-//! | `[0M]` | `01` | Calendar - Month | ❌ | ✅ | ✅ | No | Same as `MM` but zero-padded to 2 characters. | [2] |
-//! | `[WW]` | `4` | Calendar - Week | ❌ | ✅ | ✅ | **Yes** | Week of the year (`0`–`53`). Week 1 starts with the first Sunday in that year. | [2] |
-//! | `[0W]` | `04` | Calendar - Week | ❌ | ✅ | ✅ | No | Same as `WW` but zero-padded to 2 characters. | [2] |
-//! | `[DD]` | `3` | Calendar - Day | ❌ | ✅ | ✅ | **Yes** | Day of the month (`1`–`31`). | [2] |
-//! | `[0D]` | `03` | Calendar - Day | ❌ | ✅ | ✅ | No | Same as `DD` but zero-padded to 2 characters. | [2] |
+//! | `<MAJOR>` | `1` | Semantic - Major | ✅ | ❌ | ❌ | **Yes** | The major part of a version | [1] |
+//! | `<MINOR>` | `2` | Semantic - Minor | ✅ | ✅ | ❌ | **Yes** | The minor part of a version | [1] |
+//! | `<PATCH>` | `3` | Semantic - Patch | ✅ | ✅ | ❌ | **Yes** | The patch part of a version | [1] |
+//! | `<YYYY>` | `2001` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Full year. This will be at least 1 digit (e.g. year `1` or year `10000`). We do not support BCE years for this specifier. | [2] |
+//! | `<YY>` | `1` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | The last two digits of the year (for years <= `2099`). In general, this is the same as `year - 2000` so that, for example, years `2001`, `2101`, ... `3001` are disambiguated. We do not support years less than `2000` for this specifier. | [2] |
+//! | `<0Y>` | `01` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Same as `YY` but zero-padded to at least 2 characters. | [2] |
+//! | `<MM>` | `1` | Calendar - Month | ❌ | ✅ | ✅ | **Yes** | Month (`1`–`12`). | [2] |
+//! | `<0M>` | `01` | Calendar - Month | ❌ | ✅ | ✅ | No | Same as `MM` but zero-padded to 2 characters. | [2] |
+//! | `<WW>` | `4` | Calendar - Week | ❌ | ✅ | ✅ | **Yes** | Week of the year (`0`–`53`). Week 1 starts with the first Sunday in that year. | [2] |
+//! | `<0W>` | `04` | Calendar - Week | ❌ | ✅ | ✅ | No | Same as `WW` but zero-padded to 2 characters. | [2] |
+//! | `<DD>` | `3` | Calendar - Day | ❌ | ✅ | ✅ | **Yes** | Day of the month (`1`–`31`). | [2] |
+//! | `<0D>` | `03` | Calendar - Day | ❌ | ✅ | ✅ | No | Same as `DD` but zero-padded to 2 characters. | [2] |
 //!
 //! [1]: https://semver.org/
 //! [2]: https://calver.org/
@@ -105,13 +105,13 @@
 //! use nextver::prelude::*;
 //!
 //! // always consistent because of literal separator
-//! let format = Cal::new_format("[YYYY].[MM]");
+//! let format = Cal::new_format("<YYYY>.<MM>");
 //!
 //! // inconsistent: YYYY will consume first digit of a two-digit MM
-//! let format = Cal::new_format("[YYYY][MM]");
+//! let format = Cal::new_format("<YYYY><MM>");
 //!
 //! // always consistent: zero-padded `0M` is non-greedy, always two digits
-//! let format = Cal::new_format("[YYYY][0M]");
+//! let format = Cal::new_format("<YYYY><0M>");
 //! ```
 //!
 //! ### Escaping Brackets
@@ -124,9 +124,9 @@
 //! use nextver::prelude::*;
 //!
 //! // double backslash in regular strings
-//! let format = Sem::new_format("[MAJOR]-\\[literal-text]");
+//! let format = Sem::new_format("<MAJOR>-\\[literal-text]");
 //! // or use raw strings to just use one backslash
-//! let format = Sem::new_format(r"[MAJOR]-\[literal-text]");
+//! let format = Sem::new_format(r"<MAJOR>-\[literal-text]");
 //! ```
 //!
 //! ## Prelude
@@ -150,7 +150,7 @@ mod version;
 pub use crate::error::{CompositeError, DateError, FormatError, VersionError};
 pub use crate::format::Format;
 pub use crate::scheme::{Cal, CalSem, Scheme, Sem};
-pub use crate::specifier::{CalSemIncrSpecifier, SemSpecifier};
+pub use crate::specifier::{CalSemLevel, SemLevel};
 pub use crate::version::{Date, Version};
 
 /// A convenience module appropriate for glob imports (`use nextver::prelude::*;`).
@@ -160,7 +160,7 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::CalSem;
     #[doc(no_inline)]
-    pub use crate::CalSemIncrSpecifier;
+    pub use crate::CalSemLevel;
     #[doc(no_inline)]
     pub use crate::CompositeError;
     #[doc(no_inline)]
@@ -176,14 +176,9 @@ pub mod prelude {
     #[doc(no_inline)]
     pub use crate::Sem;
     #[doc(no_inline)]
-    pub use crate::SemSpecifier;
+    pub use crate::SemLevel;
     #[doc(no_inline)]
     pub use crate::Version;
     #[doc(no_inline)]
     pub use crate::VersionError;
 }
-
-// TODO: consider dropping regex dependency. Chrono, for example doesn't need it, and it does the
-// same kind of parsing that we do. However, there's a lot of code they maintain to do it. Is there
-// possibly some more target crate (we only use a subset of regex) that might have better
-// performance? Maybe regex_automata?

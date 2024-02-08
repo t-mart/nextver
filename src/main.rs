@@ -73,12 +73,12 @@ fn next(
     format_str: &str,
     version_str: &str,
     date: &Date,
-    spec: Option<&SemanticSpecifierArg>,
+    spec: Option<&SemLevelArg>,
 ) -> Result<Output, NextVerCliError> {
     // functions to get the semantic specifier from the option, that error if we need it but
     // don't have it
     let sem_spec = || {
-        spec.map(|s| s.to_sem_spec())
+        spec.map(|s| s.to_sem_level())
             .ok_or(NextVerCliError::NoSemanticSpecifier)
     };
     let cal_sem_spec = || {
@@ -110,7 +110,7 @@ fn next(
 }
 
 #[derive(Clone, PartialEq, Eq, ValueEnum, Debug)]
-enum SemanticSpecifierArg {
+enum SemLevelArg {
     /// increment the major semantic specifier
     Major,
     /// increment the minor semantic specifier
@@ -119,22 +119,22 @@ enum SemanticSpecifierArg {
     Patch,
 }
 
-impl SemanticSpecifierArg {
-    fn to_sem_spec(&self) -> SemSpecifier {
-        use SemanticSpecifierArg::*;
+impl SemLevelArg {
+    fn to_sem_level(&self) -> SemLevel {
+        use SemLevelArg::*;
         match self {
-            Major => SemSpecifier::Major,
-            Minor => SemSpecifier::Minor,
-            Patch => SemSpecifier::Patch,
+            Major => SemLevel::Major,
+            Minor => SemLevel::Minor,
+            Patch => SemLevel::Patch,
         }
     }
 
-    fn to_calsem_specifier(&self) -> Result<CalSemIncrSpecifier, NextVerCliError> {
-        use SemanticSpecifierArg::*;
+    fn to_calsem_specifier(&self) -> Result<CalSemLevel, NextVerCliError> {
+        use SemLevelArg::*;
         match self {
             Major => Err(NextVerCliError::MajorSpecifierWithCalsem),
-            Minor => Ok(CalSemIncrSpecifier::Minor),
-            Patch => Ok(CalSemIncrSpecifier::Patch),
+            Minor => Ok(CalSemLevel::Minor),
+            Patch => Ok(CalSemLevel::Patch),
         }
     }
 }
@@ -185,7 +185,7 @@ enum Subcommands {
         /// The semantic specifier to increment. Cal formats ignore this option entirely, and calsem
         /// formats only accept `minor` or `patch`.
         #[arg(short = 'l', long, value_enum)]
-        sem_level: Option<SemanticSpecifierArg>,
+        sem_level: Option<SemLevelArg>,
 
         /// The date to update calendar specifiers. Only has an effect if the format/version
         /// contain them. Can be either of the fixed strings `utc` or `local`, which use the current
@@ -277,7 +277,7 @@ mod tests {
             "next",
             "2024.62",
             "--format",
-            "[YYYY].[MINOR]",
+            "<YYYY>.<MINOR>",
             "--date",
             "2024-12-01",
             "--sem-level",
