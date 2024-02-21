@@ -8,7 +8,7 @@
 //!
 //! ## Examples
 //!
-//! *Below, the text in `[brackets]` is a specifier. See what they mean [here](#table).*
+//! *Below, the text in `<` and `>` brackets is a specifier. See what they mean [here](#table).*
 //!
 //! Quickly get a next version:
 //!
@@ -31,7 +31,6 @@
 //! assert_eq!(next, "2024.01-0");
 //! ```
 //!
-//!
 //! Or, break down the steps for reusability:
 //!
 //! ```
@@ -50,12 +49,14 @@
 //!   incremented to new ones and compared amongst each other.
 //! - **Format**: A string that defines the structure of a version string. It contains a sequence of
 //!   *specifiers* and *literal text*. It's modeled by the [`Format`] struct.
-//! - **Specifier**: A pattern in a format that dictates how to interpret and format its respective
-//!   part in a version. These are `[bracketed]` in a format string.
+//! - **Specifier**: A token in a format that dictates how to interpret and format its respective
+//!   part in a version. These are `<bracketed>` in a format string.
 //!
 //! ## Schemes
 //!
-//! nextver defines three versioning schemes:
+//! nextver defines three versioning schemes. Each one has its own set of specifiers and rules. See
+//! their documentation for more details.
+//!
 //!
 //! - [`Sem`]: Only semantic specifiers. For flexibility, it is a superset of
 //!   [SemVer](https://semver.org/) in that it allows the omission of `<MINOR>` and `<PATCH>`
@@ -67,7 +68,6 @@
 //!   increment it twice in the same period of its least significant specifier. For example, a
 //!   version with format `<YYYY>.<MM>.<DD>` can only be incremented/updated once per day.
 //!
-//!
 //! ## Specifiers
 //!
 //! ### Table
@@ -75,58 +75,61 @@
 //! In the "Example" column below, we reference a major of `1`, minor of `2`, patch of `3` and a
 //! date of `2001-02-03` (in the 4th week).
 //!
-//! | Specifier | Example | Type | Sem | CalSem | Cal | [Greedy?](#greedy-specifiers) | Description | Reference |
-//! |---|---|---|---|---|---|---|---|---|
-//! | `<MAJOR>` | `1` | Semantic - Major | ✅ | ❌ | ❌ | **Yes** | The major part of a version | [1] |
-//! | `<MINOR>` | `2` | Semantic - Minor | ✅ | ✅ | ❌ | **Yes** | The minor part of a version | [1] |
-//! | `<PATCH>` | `3` | Semantic - Patch | ✅ | ✅ | ❌ | **Yes** | The patch part of a version | [1] |
-//! | `<YYYY>` | `2001` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Full year. This will be at least 1 digit (e.g. year `1` or year `10000`). We do not support BCE years for this specifier. | [2] |
-//! | `<YY>` | `1` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | The last two digits of the year (for years <= `2099`). In general, this is the same as `year - 2000` so that, for example, years `2001`, `2101`, ... `3001` are disambiguated. We do not support years less than `2000` for this specifier. | [2] |
-//! | `<0Y>` | `01` | Calendar - Year | ❌ | ✅ | ✅ | **Yes** | Same as `YY` but zero-padded to at least 2 characters. | [2] |
-//! | `<MM>` | `1` | Calendar - Month | ❌ | ✅ | ✅ | **Yes** | Month (`1`–`12`). | [2] |
-//! | `<0M>` | `01` | Calendar - Month | ❌ | ✅ | ✅ | No | Same as `MM` but zero-padded to 2 characters. | [2] |
-//! | `<WW>` | `4` | Calendar - Week | ❌ | ✅ | ✅ | **Yes** | Week of the year (`0`–`53`). Week 1 starts with the first Sunday in that year. | [2] |
-//! | `<0W>` | `04` | Calendar - Week | ❌ | ✅ | ✅ | No | Same as `WW` but zero-padded to 2 characters. | [2] |
-//! | `<DD>` | `3` | Calendar - Day | ❌ | ✅ | ✅ | **Yes** | Day of the month (`1`–`31`). | [2] |
-//! | `<0D>` | `03` | Calendar - Day | ❌ | ✅ | ✅ | No | Same as `DD` but zero-padded to 2 characters. | [2] |
+//! | Specifier | Example | Sem | CalSem | Cal | [Parse Width](#parse-width) | [Format Width](#format-width) | Description | Reference |
+//! |---|---|---|---|---|---|---|---|---|---|
+//! | `<MAJOR>` | `1` | ✅ | ❌ | ❌ | >=1 | None | The major part of a version | [1] |
+//! | `<MINOR>` | `2` | ✅ | ✅ | ❌ | >=1 | None | The minor part of a version | [1] |
+//! | `<PATCH>` | `3` | ✅ | ✅ | ❌ | >=1 | None | The patch part of a version | [1] |
+//! | `<YYYY>` | `2001` | ❌ | ✅ | ✅ | >=1 | None | Full year, years less than 1 BCE are unsupported ([`0` refers to `1 BCE`](https://en.wikipedia.org/wiki/Year_zero)) | [2] |
+//! | `<YY>` | `1` | ❌ | ✅ | ✅ | >=1 | None | Year minus `2000`. For now, has same effect as `year % 100`, but the year 2100 will be `100`, and so on | [2] |
+//! | `<0Y>` | `01` | ❌ | ✅ | ✅ | >=2 | 2 | Same as `YY` but zero-padded | [2] |
+//! | `<MM>` | `1` | ❌ | ✅ | ✅ | 1 or 2 | None | Month of year (`1`–`12`) | [2] |
+//! | `<0M>` | `01` | ❌ | ✅ | ✅ | 2 | 2 | Same as `MM` but zero-padded | [2] |
+//! | `<WW>` | `4` | ❌ | ✅ | ✅ | 1 or 2 | None | Week of the year (`0`–`53`), week 1 starts with the first Sunday in that year. | [2] |
+//! | `<0W>` | `04` | ❌ | ✅ | ✅ | 2 | 2 | Same as `WW` but zero-padded | [2] |
+//! | `<DD>` | `3` | ❌ | ✅ | ✅ | 1 or 2 | None | Day of the month (`1`–`31`) | [2] |
+//! | `<0D>` | `03` | ❌ | ✅ | ✅ | 2 | 2 | Same as `DD` but zero-padded | [2] |
 //!
 //! [1]: https://semver.org/
 //! [2]: https://calver.org/
 //!
-//! ### Greedy Specifiers
+//! ### Parse Width
 //!
-//! Greedy specifiers greedily match digits (sometimes with an upper bound and sometimes not). A
-//! caveat with their use is that if you specify two consecutive greedy specifiers (without a
-//! literal separator), the former specifier can consume some of the digits of the latter. *This is
-//! probably not what you want.* For this reason, it's recommended to use a literal separator or a
-//! non-greedy latter specifier in such cases.
+//! The parse width of a specifier is the number of characters it can consume from a version string.
+//! Some specifiers are flexible in this regard, while others are not. For example, `<YYYY>` can
+//! consume 1 to an infinite number of characters, while `<0M>` can only consume 2 characters.
+//!
+//! When the parse width is variable, the specifier is currently implemented to consume as few
+//! characters as possible (non-greedy). Therefore, exercise caution when using adjacent specifiers
+//! that have this quality. For an unambiguous parse, use a literal separator between them:
 //!
 //! ```
 //! use nextver::prelude::*;
 //!
-//! // always consistent because of literal separator
+//! // always unambiguous because of literal separator
 //! let format = Cal::new_format("<YYYY>.<MM>");
 //!
-//! // inconsistent: YYYY will consume first digit of a two-digit MM
+//! // ambiguous: MM could consume 1 or 2 characters
 //! let format = Cal::new_format("<YYYY><MM>");
-//!
-//! // always consistent: zero-padded `0M` is non-greedy, always two digits
-//! let format = Cal::new_format("<YYYY><0M>");
 //! ```
+//! 
+//! ### Format Width
+//!
+//! The format width is the minimum number of characters the specifier value will be formatted to.
+//! Values with fewer characters will be zero-padded to meet this width, and values with more
+//! characters will be left as-is.
 //!
 //! ### Escaping Brackets
 //!
-//! If you want to use a literal `[` in your format, you must escape it with a preceeding backslash.
+//! If you want to use a literal `<` in your format, escape it as `<<`.
 //!
-//! `]` does not need to be escaped.
+//! `>` must not be escaped.
 //!
 //! ```
 //! use nextver::prelude::*;
 //!
-//! // double backslash in regular strings
-//! let format = Sem::new_format("<MAJOR>-\\[literal-text]");
-//! // or use raw strings to just use one backslash
-//! let format = Sem::new_format(r"<MAJOR>-\[literal-text]");
+//! let format = Sem::new_format("<MAJOR>-<<literal-text>");
+//! // matches a version like "1-<literal-text>"
 //! ```
 //!
 //! ## Prelude

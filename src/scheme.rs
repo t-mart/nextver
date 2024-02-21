@@ -10,6 +10,8 @@ pub(crate) mod priv_trait {
     use super::Specifier as SpecifierT;
     use core::fmt::Debug;
 
+    /// A private trait that is implemented by the public [super::Scheme] trait. This is used to define
+    /// methods that are only meant to be used internally, and not by the user.
     pub(crate) trait Scheme: Sized + Debug + PartialEq + Eq {
         /// The kinds of specifiers this scheme uses
         type Specifier: SpecifierT;
@@ -105,6 +107,16 @@ pub trait Scheme: priv_trait::Scheme {
 }
 
 /// Scheme for formats that have only semantic specifiers, such as `<MAJOR>.<MINOR>.<PATCH>`.
+/// 
+/// Sem behaves almost exactly like the popular [semver](https://semver.org/) scheme, but with a few
+/// differences.
+/// 
+/// ## Rules
+///
+/// - The first specifier must be `MAJOR`.
+/// - `MINOR` and `PATCH` are not required, but if they are present, they must be in that order.
+/// - Arbitrary literals can be placed in the format string. For example, dots, hyphens, or any
+///   other character(s) can be used.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Sem;
 

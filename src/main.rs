@@ -4,13 +4,13 @@ use nextver::prelude::*;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 enum NextVerCliError {
-    #[error("{0}")]
+    #[error(transparent)]
     LibraryCompositeError(#[from] CompositeError),
 
-    #[error("{0}")]
+    #[error(transparent)]
     LibraryFormatError(#[from] FormatError),
 
-    #[error("{0}")]
+    #[error(transparent)]
     LibraryVersionError(#[from] VersionError),
 
     #[error("format string was invalid for all schemes")]
@@ -50,16 +50,21 @@ fn validate(
     version_str: &str,
 ) -> Result<Output, NextVerCliError> {
     let is_valid = match scheme {
-        SchemeArg::Sem => Ok(Sem::is_valid(format_str, version_str)?),
+        SchemeArg::Sem => Result::<_, NextVerCliError>::Ok(Sem::is_valid(format_str, version_str)?),
 
         SchemeArg::Cal => Ok(Cal::is_valid(format_str, version_str)?),
 
         SchemeArg::CalSem => Ok(CalSem::is_valid(format_str, version_str)?),
 
-        SchemeArg::Guess => Sem::is_valid(format_str, version_str)
-            .or_else(|_| Cal::is_valid(format_str, version_str))
-            .or_else(|_| CalSem::is_valid(format_str, version_str))
-            .map_err(|_| NextVerCliError::NoValidScheme),
+        SchemeArg::Guess => {
+            let any = Sem::is_valid(format_str, version_str).unwrap_or(false)
+                || Cal::is_valid(format_str, version_str).unwrap_or(false)
+                || CalSem::is_valid(format_str, version_str).unwrap_or(false);
+            if !any {
+                return Err(NextVerCliError::NoValidScheme);
+            }
+            Ok(true)
+        }
     }?;
     if is_valid {
         Ok((true.to_string(), ExitCode::Success))
@@ -92,7 +97,9 @@ fn next(
 
         SchemeArg::Cal => Cal::next_version_string(format_str, version_str, date)?,
 
-        SchemeArg::CalSem => CalSem::next_version_string(format_str, version_str, date, &cal_sem_spec()?)?,
+        SchemeArg::CalSem => {
+            CalSem::next_version_string(format_str, version_str, date, &cal_sem_spec()?)?
+        }
 
         SchemeArg::Guess => {
             if let Ok(sem_ver) = Sem::new_version(format_str, version_str) {
@@ -277,11 +284,11 @@ mod tests {
             "next",
             "2024.62",
             "--format",
-            "<YYYY>.<MINOR>",
+            "<YYYY>.<PATCH>",
             "--date",
             "2024-12-01",
             "--sem-level",
-            "minor",
+            "patch",
         ])
         .unwrap();
 

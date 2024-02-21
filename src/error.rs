@@ -1,4 +1,3 @@
-use crate::Date;
 #[cfg(doc)]
 use chrono::NaiveDate;
 #[cfg(doc)]
@@ -50,31 +49,26 @@ pub enum VersionError {
     },
 
     /// When updating/incrementing a [Sem](crate::Sem) or [CalSem](crate::CalSem) version, the
-    /// semantic specifier level is not in the format.
+    /// semantic level is not in the format.
     #[error("`{spec}` was not found in format, use one that is")]
-    SemanticSpecifierNotInFormat {
+    SemLevelNotInFormat {
         /// The semantic specifier
         spec: String,
     },
 
     /// The new date passed to a `next` call was *before* the date represented by the current
     /// version.
-    #[error("new date ({new_date}) is before current date ({current_date})")]
-    NewDateBeforeCurrentDate {
-        /// The new date
-        new_date: Date,
-        /// The current date
-        current_date: Date,
-    },
+    #[error("new date should be after date in version")]
+    NewDateIsBefore,
 }
 
 /// An error that occurred while parsing a format string.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum FormatError {
-    /// The specifier is not terminated with a closing square bracket (`]`).
+    /// The specifier is not terminated with a closing bracket.
     #[error(
-        "specifier in format should be terminated with a closing square bracket (`]`), got `{pattern}`"
+        "specifier in format should be terminated with a closing square bracket (`>`), got `{pattern}`"
     )]
     UnterminatedSpecifier {
         /// The unterminated specifier string
