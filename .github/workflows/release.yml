@@ -30,6 +30,8 @@ jobs:
 
       # some possibility for race condition here, but not a problem unless we're spamming this action
       - name: Create release if version does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
         id: version_check
         run: |
           TAG_NAME="v${{ steps.extract_version.outputs.version }}"
