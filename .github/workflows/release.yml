@@ -40,11 +40,13 @@ jobs:
           REF="refs/tags/${TAG_NAME}"
           if git rev-parse -q --verify "${REF}"; then
             echo "Tag v$VERSION already exists, skipping release"
-            echo "::error title=already_exists::Tag v$VERSION already exists, skipping release"
+            echo "::error title=Tag Exists::true"
           else
-            gh release create ${TAG_NAME} \
+            echo "::error title=Tag Exists::false"
+            URL=$(gh release create ${TAG_NAME} \
               -t "Release ${TAG_NAME}" \
-              --generate-notes
+              --generate-notes)
+            echo "::notice title=Release URL::${URL}"
           fi
 
 # TODO:
