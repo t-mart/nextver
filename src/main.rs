@@ -11,7 +11,7 @@ enum NextVerCliError {
     LibraryFormatError(#[from] FormatError),
 
     #[error(transparent)]
-    LibraryVersionError(#[from] VersionError),
+    LibraryNextError(#[from] NextError),
 
     #[error("format string was invalid for all schemes")]
     NoValidScheme,
@@ -207,7 +207,7 @@ enum Subcommands {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 #[repr(u8)]
 enum ExitCode {
     Success = 0,
@@ -275,23 +275,37 @@ fn run(cli: Cli) -> Result<Output, NextVerCliError> {
 mod tests {
     use super::*;
 
-    // TODO: add real tests
-
     #[test]
-    fn test_some_sheeeeyt() {
+    fn test_basic_calsem_date_diff() {
         let res = Cli::try_parse_from([
             "nextver",
             "next",
-            "2024.62",
+            "2024.07.0",
             "--format",
-            "<YYYY>.<PATCH>",
+            "<YYYY>.<0W>.<PATCH>",
             "--date",
-            "2024-12-01",
+            "2024-02-26",
             "--sem-level",
             "patch",
-        ])
-        .unwrap();
+        ]).unwrap();
 
-        dbg!(run(res).unwrap());
+        assert_eq!(Ok(("2024.08.0".to_string(), ExitCode::Success,)), run(res));
+    }
+
+    #[test]
+    fn test_basic_calsem_date_same() {
+        let res = Cli::try_parse_from([
+            "nextver",
+            "next",
+            "2024.08.0",
+            "--format",
+            "<YYYY>.<0W>.<PATCH>",
+            "--date",
+            "2024-02-26",
+            "--sem-level",
+            "patch",
+        ]).unwrap();
+
+        assert_eq!(Ok(("2024.08.1".to_string(), ExitCode::Success,)), run(res));
     }
 }

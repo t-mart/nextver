@@ -10,18 +10,22 @@ use std::str::FromStr;
 // Additionally, "error messages are typically concise lowercase sentences without trailing
 // punctuation": <https://doc.rust-lang.org/std/error/trait.Error.html#>
 
-/// An error that occurred in a function that internally does format and version parsing (which have
-/// their own errors).
+/// An error that occurred in a function that composes calls for other crate functions with other
+/// error types.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum CompositeError {
     /// An error from parsing a format string. See [`FormatError`] for more details.
-    #[error("format error: {0}")]
+    #[error(transparent)]
     Format(#[from] FormatError),
 
     /// An error from parsing a version string. See [`VersionError`] for more details.
-    #[error("version error: {0}")]
+    #[error(transparent)]
     Version(#[from] VersionError),
+
+    /// An error incrementing a [`Version`](crate::Version). See [`NextError`] for more details.
+    #[error(transparent)]
+    Next(#[from] NextError),
 }
 
 /// An error that occurred while parsing a version string.
@@ -36,19 +40,25 @@ pub enum VersionError {
         /// The format string
         format_string: String,
     },
+}
 
-    /// When updating a [Cal](crate::Cal) version, the date provided yielded an identical version.
+/// An error that occurred while incrementing a [`Version`](crate::Version).
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum NextError {
+    /// When updating a [`Cal`](crate::Cal) version, the date provided yielded an identical version.
     #[error("date provided should yield a version that is newer/greater than the current version")]
     NoCalendarChange,
 
-    /// When updating a [Cal](crate::Cal) or [CalSem](crate::CalSem) version, the date year was negative.
+    /// When updating a [`Cal`](crate::Cal) or [`CalSem`](crate::CalSem) version, the date year was
+    /// negative.
     #[error("year `{year}` should not be negative when formatted`")]
     NegativeYearValue {
         /// The year value
         year: i32,
     },
 
-    /// When updating/incrementing a [Sem](crate::Sem) or [CalSem](crate::CalSem) version, the
+    /// When updating/incrementing a [`Sem`](crate::Sem) or [`CalSem`](crate::CalSem) version, the
     /// semantic level is not in the format.
     #[error("`{spec}` was not found in format, use one that is")]
     SemLevelNotInFormat {
@@ -131,11 +141,12 @@ pub enum FormatError {
     NoSpecifiersInFormat,
 }
 
-/// Errors around dates, as used to update [Cal](crate::Cal) and [CalSem](crate::CalSem) versions.
+/// Errors around dates, as used to update [`Cal`](crate::Cal) and [`CalSem`](crate::CalSem)
+/// versions.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum DateError {
-    /// Arguments to [Date::explicit] do not represent a valid date.
+    /// Arguments to [`Date::explicit`](crate::Date::explicit) do not represent a valid date.
     #[error("year ({year}), month ({month}), and day ({day}) should represent a valid date")]
     InvalidDateArguments {
         /// The year value
@@ -148,7 +159,7 @@ pub enum DateError {
 
     /// The date string could not be parsed.
     ///
-    /// See [chrono::NaiveDate::from_str] and [chrono::ParseError].
-    #[error("{0}, date should be parseable")]
+    /// See [`chrono::NaiveDate::from_str`] and [`chrono::ParseError`].
+    #[error(transparent)]
     UnparseableDate(#[from] chrono::ParseError),
 }

@@ -1,9 +1,9 @@
-use crate::error::VersionError;
+use crate::error::NextError;
 use chrono::{Datelike, NaiveDate};
 use core::fmt::{self, Debug, Display};
 
 pub(crate) type SpecValue = u32;
-pub(crate) type SpecValueResult = Result<SpecValue, VersionError>;
+pub(crate) type SpecValueResult = Result<SpecValue, NextError>;
 type NextDateFn = fn(&NaiveDate) -> SpecValueResult;
 
 fn full_year_next(date: &NaiveDate) -> SpecValueResult {
@@ -13,7 +13,7 @@ fn full_year_next(date: &NaiveDate) -> SpecValueResult {
         // negatives would require a sign to round trip, so disallow
         // NOTE: 0 is allowed here, but it refers to 1 BCE. this is how chrono (and every datetime
         // library) works
-        Err(VersionError::NegativeYearValue { year })
+        Err(NextError::NegativeYearValue { year })
     } else {
         Ok(year as SpecValue)
     }
@@ -26,7 +26,7 @@ fn short_year_next(date: &NaiveDate) -> SpecValueResult {
     let diff = year - 2000;
     if diff < 0 {
         // negatives would require a sign to round trip, so disallow
-        Err(VersionError::NegativeYearValue { year })
+        Err(NextError::NegativeYearValue { year })
     } else {
         Ok(diff as SpecValue)
     }
@@ -260,15 +260,16 @@ pub(crate) const SEM_MINOR: SemSpecifier = SemSpecifier::Minor;
 pub(crate) const SEM_PATCH: SemSpecifier = SemSpecifier::Patch;
 const SEM_ALL: &[&SemSpecifier] = &[&SEM_MAJOR, &SEM_MINOR, &SEM_PATCH];
 
-/// A semantic specifier to increment in a [Sem](crate::Sem) format
-#[derive(Debug, PartialEq, Eq, Clone)]
+/// A semantic specifier to increment in a [`Sem`](crate::Sem) [`Version`](crate::Version).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[non_exhaustive]
 pub enum SemLevel {
-    /// Increment the major specifier and reset the minor and patch specifiers.
+    /// Refers to the major version specifier,`<MAJOR>`. It is greater than `<MINOR>` and `<PATCH>`.
     Major,
-    /// Increment the minor specifier and reset the patch specifier.
+    /// Refers to the minor version specifier,`<MINOR>`. It is greater than `<PATCH>` and less than
+    /// `<MAJOR>`.
     Minor,
-    /// Increment the patch specifier.
+    /// Refers to the patch version specifier,`<PATCH>`. It is less than `<MINOR>` and `<MAJOR>`.
     Patch,
 }
 
@@ -281,6 +282,12 @@ impl Level for SemLevel {
             Self::Minor => &SEM_MINOR,
             Self::Patch => &SEM_PATCH,
         }
+    }
+}
+
+impl AsRef<SemLevel> for SemLevel {
+    fn as_ref(&self) -> &SemLevel {
+        self
     }
 }
 
@@ -655,12 +662,13 @@ const CALSEM_ALL: &[&CalSemSpecifier] = &[
     &CALSEM_PATCH,
 ];
 
-/// A semantic-type specifier to increment in a [CalSem](crate::CalSem) format
-#[derive(Debug, PartialEq, Eq, Clone)]
+/// A semantic-type specifier to increment in a [`CalSem`](crate::CalSem)
+/// [`Version`](crate::Version).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CalSemLevel {
-    /// A minor version specifier, such as `<MINOR>`.
+    /// Refers to the minor version specifier, `<MINOR>`. It is greater than `<PATCH>`.
     Minor,
-    /// A patch version specifier, such as `<PATCH>`.
+    /// Refers to the patch version specifier, `<PATCH>`. It is less than `<MINOR>`.
     Patch,
 }
 
@@ -672,6 +680,12 @@ impl Level for CalSemLevel {
             Self::Minor => &CALSEM_MINOR,
             Self::Patch => &CALSEM_PATCH,
         }
+    }
+}
+
+impl AsRef<CalSemLevel> for CalSemLevel {
+    fn as_ref(&self) -> &CalSemLevel {
+        self
     }
 }
 

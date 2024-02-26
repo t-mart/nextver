@@ -41,52 +41,16 @@ impl<'fs, S: Scheme> Display for FormatToken<'fs, S> {
     }
 }
 
-/// A Format describes the structure of a version. It's created from a string that contains
-/// specifiers indicating what each part of the string means. Later, the Format can be used to parse
-/// a version string into a [Version](crate::version::Version) struct.
+/// A Format describes the structure of a version, comprised of *specifiers* and *literal text*.
+///
+/// Later, the `Format` can be used to parse a version string into a
+/// [`Version`](crate::version::Version) struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Format<'fs, S: Scheme> {
     pub(crate) tokens: Vec<FormatToken<'fs, S>>,
 }
 
 impl<'fs, S: Scheme> Format<'fs, S> {
-    /// Parse a format string containing specifiers and literals into a [Format].
-    /// 
-    /// The format string is made up of specifiers and literals. Specifiers indicate numeric values
-    /// that can change, while literals are fixed text.
-    /// 
-    /// See the specifier table [here](crate#specifier-table) for a list of all specifiers, which
-    /// appear as `<...>` in the format string. To escape a literal `<`, use `<<`. `>` must not be
-    /// escaped.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use nextver::prelude::*;
-    ///
-    /// let format_str = "<YYYY>.<MM>.<PATCH>";
-    /// let format = Format::<CalSem>::parse(format_str);
-    /// assert_eq!(Ok(format_str), format.map(|f| f.to_string()).as_ref());
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an `Err` of ...
-    ///
-    /// - [FormatError::UnterminatedSpecifier] if an open bracket is not closed with a closing
-    ///   bracket.
-    /// - [FormatError::UnacceptableSpecifier] if a specifier is not known to the scheme.
-    /// - [FormatError::SpecifiersMustStepDecrease] if specifiers are not in order. See each
-    ///   scheme's documentation for more details.
-    /// - [FormatError::WrongFirstSpecifier] if the first specifier is not acceptable for the
-    ///   scheme.
-    /// - [FormatError::Incomplete] if the last specifier is not acceptable for the scheme.
-    /// - [FormatError::NoSpecifiersInFormat] if there are no specifiers in the format.
-    ///
-    /// # Note
-    ///
-    /// It is probably more ergonomic to use the `new_format` methods on a [Scheme], rather than
-    /// creating this struct directly.
     pub(crate) fn parse(format_str: &'fs str) -> Result<Self, FormatError> {
         let mut format = format_str.as_bytes();
         let mut tokens = Vec::with_capacity(S::MAX_TOKENS);
@@ -195,7 +159,23 @@ impl<'fs, S: Scheme> Format<'fs, S> {
         Ok(Self { tokens })
     }
 
-    /// Create a new [Version] from this format and a version string.
+    /// Parses a version string with this format and return a [`Version`] object.
+    ///
+    /// A version string is valid for a format if it matches the format exactly. This means that:
+    ///
+    /// - Specifiers (e.g. `<MAJOR>`) in the format are replaced with the numeric values. See the
+    ///   [table](crate#table) for how these values are expressed (such as zero-padding).
+    ///
+    ///   Note: The values in `version_str` are *not* validated to be actual dates. For example,
+    ///   `2021.02.31` is valid for the format `<YYYY>.<MM>.<DD>`, even though February 31st does
+    ///   not exist.
+    ///
+    /// - Literal text in the format must match the version string exactly.
+    ///
+    /// # Errors
+    ///
+    /// - If the version string does not match the format string, returns a
+    ///   [`VersionError::VersionFormatMismatch`].
     pub fn new_version<'vs>(&self, version_str: &'vs str) -> Result<Version<'vs, S>, VersionError> {
         Version::parse(version_str, self)
     }
