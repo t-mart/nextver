@@ -38,8 +38,8 @@ jobs:
             echo "Tag v$VERSION already exists, skipping release"
             echo "::error title=already_exists::Tag v$VERSION already exists, skipping release"
           else
-            gh release create ${TAG_NAME} \
-              -t "Release ${TAG_NAME} \
+            gh release create ${TAG_NAME}
+              -t "Release ${TAG_NAME}" \
               --generate-notes
           fi
 
