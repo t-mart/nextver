@@ -20,7 +20,7 @@ use nextver::prelude::*;
 let next = Sem::next_version_string(
   "<MAJOR>.<MINOR>.<PATCH>",  // format string
   "1.2.3",                    // current version string
-  &SemLevel::Minor   // the specifier to increment
+  &SemLevel::Minor            // the specifier to increment
 )?;
 assert_eq!(next, "1.3.0");
 # Ok::<(), Box<dyn std::error::Error>>(())
