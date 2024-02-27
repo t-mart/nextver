@@ -1,7 +1,15 @@
 name: Release + Build + Publish
 
-# Workflow overview:
-# - Determine if we need to release by seeing if there's a git tag with the cargo version
+# Workflow Overview
+#
+# This workflow is triggered when:
+# - A commit is pushed to the master branch that changes Cargo.toml's version
+# - A user manually triggers the workflow
+#
+# If that's so, then we:
+# - Determine if we need to release by seeing if there's a git tag with the
+#   cargo version. (If that tag exists, we don't need to release, presumably
+#   because this workflow has already run.)
 # - If we need to release:
 #   - Build the project into binaries for all platforms
 #   - Create a GitHub release with the binaries as assets
@@ -174,6 +182,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.name }}
+          
       - name: Collect artifacts
         uses: actions/download-artifact@v4
         with:
