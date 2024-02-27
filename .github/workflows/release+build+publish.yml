@@ -1,5 +1,12 @@
 name: Release + Build + Publish
 
+# Workflow overview:
+# - Determine if we need to release by seeing if there's a git tag with the cargo version
+# - If we need to release:
+#   - Build the project into binaries for all platforms
+#   - Create a GitHub release with the binaries as assets
+#   - Publish to crates.io
+
 on:
   push:
     branches:
@@ -105,6 +112,7 @@ jobs:
 
       - name: Make paths
         id: make_paths
+        shell: bash
         run: |
           # the relative path of the directory of the binary
           BINARY_DIR=target/${{ matrix.triple }}/release
@@ -138,6 +146,7 @@ jobs:
 
       - name: Archive (Windows)
         if: runner.os == 'Windows'
+        shell: bash
         run: |
           7z a -mx9 "${{ steps.make_paths.outputs.archive_path}}" \
             "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}"
