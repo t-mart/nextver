@@ -154,6 +154,11 @@ pub trait Scheme: priv_trait::Scheme {
 ///   `PATCH` is present, it must be after `MINOR`.
 /// - As for all schemes, arbitrary literals can be placed in the format string. For example, dots,
 ///   hyphens, or any other character(s) can be used, such as `v<MAJOR>#<MINOR>-p<PATCH>`.
+///
+/// # Example Formats
+///
+/// - `<MAJOR>.<MINOR>.<PATCH>`: Major, minor, and patch. Dot-separated.
+/// - `v<MAJOR>.<MINOR>`: `v` followed by major and minor. Dot-separated.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Sem;
 
@@ -224,6 +229,12 @@ impl priv_trait::Scheme for Sem {
 ///   - week specifiers are relative to year ones (and *not month ones*) (e.g., `<YYYY>.<WW>`)
 /// - As for all schemes, arbitrary literals can be placed in the format string. For example, dots,
 ///   hyphens, or any other character(s) can be used, such as `y<YYYY>m<MM>d<DD>`.
+///
+/// # Example Formats
+///
+/// - `<YYYY>.<0M>.<0D>`: Full year, zero-padded month, and zero-padded day. Dot-separated.
+/// - `<0Y>.<0M>.<0D>`: Zero-padded year, zero-padded month, and zero-padded day. Dot-separated.
+/// - `<YYYY>-<0W>`: Full year and zero-padded week. Hyphen-separated.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Cal;
 
@@ -284,9 +295,8 @@ impl priv_trait::Scheme for Cal {
 /// Scheme for formats that have both calendar and semantic specifiers, such as
 /// `<YYYY>.<MM>.<PATCH>`.
 ///
-/// You would have such a format if you want to be able to increase
-/// your version multiple times within the period of your smallest calendar specifier, such a
-/// second time in the same day.
+/// You would have such a format if you want to be able to increase your version multiple times
+/// within the period of your smallest calendar specifier, such a second time in the same day.
 ///
 /// See the available specifiers for this scheme in the [table](crate#table).
 ///
@@ -301,6 +311,15 @@ impl priv_trait::Scheme for Cal {
 ///   - `MINOR` may optionally come before `PATCH` if more granularity is desired.
 /// - As for all schemes, arbitrary literals can be placed in the format string. For example, dots,
 ///   hyphens, or any other character(s) can be used, such as `y<YYYY>m<MM>d<DD>-p<PATCH>`.
+///
+/// # Example Formats
+///
+/// - `<YYYY>.<0M>.<0D>.<PATCH>`: Full year, zero-padded month, zero-padded day, and patch.
+///   Dot-separated.
+/// - `<0Y>.<0M>.<0D>.<PATCH>`: Zero-padded year, zero-padded month, zero-padded day, and patch.
+///   Dot-separated.
+/// - `<YYYY>.<0W>-<MINOR>.<PATCH>`: Full year, zero-padded week, minor, and patch. Dot- and
+///   hyphen-separated.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CalSem;
 

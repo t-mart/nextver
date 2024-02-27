@@ -31,10 +31,6 @@
 //! 
 //! let date = Date::utc_now();       // assume today is 2024-02-23
 //! # let date = Date::explicit(2024, 2, 23)?;
-//! // Could also be::
-//! // - Date::local_now(),
-//! // - "2024-02-23".parse()
-//! // - Date::explicit(2024, 2, 23)
 //! 
 //! let next = CalSem::next_version_string(
 //!   "<YYYY>.<0M>-<PATCH>",          // format string
@@ -97,43 +93,46 @@
 //! In the "Example" column below, we reference a major of `1`, minor of `2`, patch of `3` and a
 //! date of `2001-02-03` (which is in the 4th week).
 //! 
-//! | Specifier | Example | Sem | CalSem | Cal | [Parse Width](#parse-width) | [Format Width](#format-width) | Description |
+//! | Specifier | Example | Sem | CalSem | Cal | [Parse Width](#parse-width) | [Min. Format Width](#minimum-format-width) | Description |
 //! |---|---|---|---|---|---|---|---|
-//! | `<MAJOR>` | `1` | ✅ | ❌ | ❌ | >=1 | None | The major part of a version |
-//! | `<MINOR>` | `2` | ✅ | ✅ | ❌ | >=1 | None | The minor part of a version |
-//! | `<PATCH>` | `3` | ✅ | ✅ | ❌ | >=1 | None | The patch part of a version |
-//! | `<YYYY>` | `2001` | ❌ | ✅ | ✅ | >=1 | None | Full year, years less than 1 BCE are unsupported ([`0` refers to 1 BCE](https://en.wikipedia.org/wiki/Year_zero)) |
-//! | `<YY>` | `1` | ❌ | ✅ | ✅ | >=1 | None | Year minus `2000`. For now, has same effect as `year % 100`, but the year 2100 will be `100`, and so on |
+//! | `<MAJOR>` | `1` | ✅ | ❌ | ❌ | >=1 | - | The major part of a version |
+//! | `<MINOR>` | `2` | ✅ | ✅ | ❌ | >=1 | - | The minor part of a version |
+//! | `<PATCH>` | `3` | ✅ | ✅ | ❌ | >=1 | - | The patch part of a version |
+//! | `<YYYY>` | `2001` | ❌ | ✅ | ✅ | >=1 | - | Full year, years less than 1 BCE are unsupported ([`0` refers to 1 BCE](https://en.wikipedia.org/wiki/Year_zero)) |
+//! | `<YY>` | `1` | ❌ | ✅ | ✅ | >=1 | - | Year minus `2000`. For now, has same effect as `year % 100`, but the year 2100 will be `100`, and so on |
 //! | `<0Y>` | `01` | ❌ | ✅ | ✅ | >=2 | 2 | Same as `YY` but zero-padded |
-//! | `<MM>` | `1` | ❌ | ✅ | ✅ | 1 or 2 | None | Month of year (`1`–`12`) |
+//! | `<MM>` | `1` | ❌ | ✅ | ✅ | 1 or 2 | - | Month of year (`1`–`12`) |
 //! | `<0M>` | `01` | ❌ | ✅ | ✅ | 2 | 2 | Same as `MM` but zero-padded |
-//! | `<WW>` | `4` | ❌ | ✅ | ✅ | 1 or 2 | None | Week of the year (`0`–`53`), week 1 starts with the first Sunday in that year. |
+//! | `<WW>` | `4` | ❌ | ✅ | ✅ | 1 or 2 | - | Week of the year (`0`–`53`), week 1 starts with the first Sunday in that year. |
 //! | `<0W>` | `04` | ❌ | ✅ | ✅ | 2 | 2 | Same as `WW` but zero-padded |
-//! | `<DD>` | `3` | ❌ | ✅ | ✅ | 1 or 2 | None | Day of the month (`1`–`31`) |
+//! | `<DD>` | `3` | ❌ | ✅ | ✅ | 1 or 2 | - | Day of the month (`1`–`31`) |
 //! | `<0D>` | `03` | ❌ | ✅ | ✅ | 2 | 2 | Same as `DD` but zero-padded |
 //! 
-//! Specifiers are case-sensitive. For example, `<major>` is not a valid specifier.
+//! Specifiers are case-sensitive. For example, `<major>` or `<yYyY>` are not a valid specifiers.
 //! 
 //! ### Parse Width
 //! 
-//! The parse width of a specifier is the number of characters it can consume from a version string.
-//! Some specifiers are flexible in this regard, while others are not. For example, `<YYYY>` can
-//! consume 1 to an infinite number of characters, while `<0M>` can only consume 2 characters.
+//! The parse width comes into play when reading an existing version string. It is the number of
+//! characters a specifier can consume. Some specifiers are flexible in this regard, while others
+//! are not. For example, `<YYYY>` can consume 1 to an infinite number of characters, while `<0M>`
+//! can only consume 2 characters.
 //! 
 //! When the parse width is variable, the specifier is currently implemented to consume as **few**
 //! characters as possible (non-greedy). Therefore, exercise caution when using adjacent specifiers
-//! that have this quality. For an unsurprising parse, use a literal separator between them.
+//! that have this quality. **For an unsurprising parse, use a literal separator between them.**
 //! 
 //! ```
 //! use nextver::prelude::*;
 //! 
-//! // The starts and ends of these specifiers' values are ambiguous because there is no literal
-//! // separator between them. nextver will choose a non-greedy parse.
-//! let format_str = "<MAJOR><MINOR><PATCH>";
+//! // Let's say I have a version values of major=111, minor=222, patch=333
 //! let (major, minor, patch) = (111, 222, 333);
+//!
+//! // And, my format string contains no separators between the specifiers
+//! let format_str = "<MAJOR><MINOR><PATCH>";
 //! let version_str = format!("{}{}{}", major, minor, patch);
 //! 
-//! // nextver is going to interpret: major=1, minor=1, patch=1222333, despite our intentions
+//! // There is no clear way to parse this because the starts and ends of specifiers are ambiguous.
+//! // So, nextver is going to interpret: major=1, minor=1, patch=1222333, despite our intentions
 //! let next_str = Sem::next_version_string(format_str, &version_str, &SemLevel::Minor)?;
 //! 
 //! // thus, the next version is: major=1, minor=2, patch=0
@@ -141,11 +140,19 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //! 
-//! ### Format Width
+//! ### Minimum Format Width
 //! 
-//! The format width is the minimum number of characters the specifier value will be formatted to.
-//! Values with fewer characters will be zero-padded to meet this width, and values with more
-//! characters will be left as-is.
+//! The format width is the minimum number of characters the specifier value will be formatted to
+//! with zero-padding. Values with fewer characters than this number will be zero-padded to meet
+//! this width, and values with more characters will be left as-is. (In the table above, a `-` value
+//! means no zero padding applied.) 
+//!
+//! Take, for example, the `<0Y>` specifier that has a format width of `2`. Given a year, it may be
+//! formatted as follows:
+//!
+//! - `2001` → `01`, zero-padded to meet the format width
+//! - `2010` → `10`, as-is formatting
+//! - `2100` → `100`, as-is formatting
 //! 
 //! ### Escaping Brackets
 //! 
