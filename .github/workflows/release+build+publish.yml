@@ -23,6 +23,7 @@ jobs:
     outputs:
       name: ${{ steps.create_tag.outputs.name }}
       needs_build: ${{ steps.create_tag.outputs.needs_build }}
+      cargo_version: ${{ steps.extract_version.outputs.cargo_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,8 +47,8 @@ jobs:
 
       # some possibility for race condition here, but not a problem unless we're spamming this action
       - name: Create tag
-        env:
-          GH_TOKEN: ${{ github.token }}
+        # env:
+        #   GH_TOKEN: ${{ github.token }}
         id: create_tag
         run: |
           TAG_NAME="v${{ steps.extract_version.outputs.cargo_version }}"
@@ -186,6 +187,8 @@ jobs:
           sha256sum * > sha256sums.txt
 
       - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG_NAME=${{ needs.tag.outputs.name }}
           URL=$(gh release create "${TAG_NAME}" \
@@ -193,13 +196,14 @@ jobs:
             --verify-tag \
             --generate-notes)
           echo "::notice title=Release URL::${URL}"
-
-      - name: Upload binary assets
-        run: |
-          TAG_NAME=${{ needs.tag.outputs.name }}
+          
           gh release upload "${TAG_NAME}" binary-archives/*
           
       - name: Publish to crates.io
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Show crates.io URL
+        run: |
+          echo "::notice title=crates.io URL::https://crates.io/crates/nextver/${{ needs.tag.outputs.cargo_version }}"
