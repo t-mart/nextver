@@ -119,9 +119,11 @@ jobs:
           path: |
             ~/.cargo/registry
             target/
-          key: nextver-${{ matrix.triple }}-${{ hashFiles('**/Cargo.lock') }}
+          key: nextver-${{ matrix.triple }}-${{needs.tag.outputs.name}}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            nextver-${{ matrix.triple }}-${{needs.tag.outputs.name}}-
             nextver-${{ matrix.triple }}-
+            nextver-
 
       - name: Test
         run: cargo test --target ${{ matrix.triple }}
@@ -226,7 +228,7 @@ jobs:
           gh release upload "${TAG_NAME}" ../binary-archives/*
           
       - name: Publish to crates.io
-        run: cargo publish -C source
+        run: cargo -C source publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
