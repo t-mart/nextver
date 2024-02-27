@@ -26,7 +26,7 @@ jobs:
         id: extract_version
         run: |
           CARGO_METADATA=$(cargo metadata --format-version 1 --no-deps)
-          CARGO_VERSION=$(echo ${CARGO_METADATA} | jq -r '.packages[] | select(.name == "nextver") | .version')
+          CARGO_VERSION=$(echo "${CARGO_METADATA}" | jq -r '.packages[] | select(.name == "nextver") | .version')
 
           if [ -z "${CARGO_VERSION}" ]; then
             echo "CARGO_VERSION should not be empty, likely problem with metadata or jq command"
@@ -60,7 +60,7 @@ jobs:
           fi
 
           echo "::notice title=Needs Build::${NEEDS_BUILD}"
-          echo "needs_build=${NEEDS_BUILD}" >> "$GITHUB_OUTPUT"      
+          echo "needs_build=${NEEDS_BUILD}" >> "$GITHUB_OUTPUT"
 
 # TODO:
   # build on some runners, e.g. ubuntu-latest, macos-latest, windows-latest
@@ -78,13 +78,16 @@ jobs:
         include:
           - os: ubuntu-latest
             triple: x86_64-unknown-linux-gnu
-            ext: ""
+            bin_ext: ""
+            archive_ext: .tgz
           - os: windows-latest
             triple: x86_64-pc-windows-msvc
-            ext: .exe
+            bin_ext: .exe
+            archive_ext: .zip
           - os: macos-latest
             triple: x86_64-apple-darwin
-            ext: ""
+            bin_ext: ""
+            archive_ext: .zip
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,37 +103,94 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.triple }}
 
+      - name: Make paths
+        id: make_paths
+        run: |
+          # the relative path of the directory of the binary
+          BINARY_DIR=target/${{ matrix.triple }}/release
+          echo "binary_dir=${BINARY_DIR}" >> "$GITHUB_OUTPUT"
+
+          # the filename of the binary (inside BINARY_DIR)
+          BINARY_FILENAME=nextver${{ matrix.bin_ext }}
+          echo "binary_filename=${BINARY_FILENAME}" >> "$GITHUB_OUTPUT"
+
+          # the filename of the archive to create
+          ARCHIVE_FILENAME=nextver-${{ matrix.triple }}-v${{ needs.tag.outputs.name }}${{ matrix.archive_ext }}
+          echo "archive_filename=${ARCHIVE_FILENAME}" >> "$GITHUB_OUTPUT"
+
+          # the relative path of the archive to create
+          ARCHIVE_PATH=${BINARY_DIR}/${ARCHIVE_FILENAME}
+          echo "archive_path=${ARCHIVE_PATH}" >> "$GITHUB_OUTPUT"
+
+      # in the following steps, we make archives containing the binary. each
+      # platform has different archive expectations (e.g. Linux uses tar,
+      # Windows/macOS use zip) and also has different tooling/invocations to
+      # make those archives.
+
+      - name: Archive (Linux)
+        id: archive_linux
+        if: runner.os == 'Linux'
+        run: |
+          tar -cf - \
+            -C "${{ steps.make_paths.outputs.binary_dir }}" \
+            "${{ steps.make_paths.outputs.binary_filename}}" \
+            | gzip -9 > "${{ steps.make_paths.outputs.archive_path}}"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          7z a -mx9 "${{ steps.make_paths.outputs.archive_path}}" \
+            "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}"
+
+      - name: Archive (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          zip -r -9 "${{ steps.make_paths.outputs.archive_path}}" \
+            "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}"
+      
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nextver-${{ matrix.triple }}-${{ needs.tag.outputs.name }}
-          path: target/${{ matrix.triple }}/release/nextver${{ matrix.ext }}
+          # this naming is important: it'll be used as a prefix pattern in the
+          # download action
+          name: ${{ steps.make_paths.outputs.archive_filename}}
+          path: ${{ steps.make_paths.outputs.archive_path}}
 
   release:
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - tag
+      - build
     permissions:
       contents: write
     steps:
       - name: Collect artifacts
         uses: actions/download-artifact@v4
         with:
-          path: binaries
-          pattern: nextver-*
+          path: binary-archives
+          pattern: nextver-* # this is the common prefix from the upload action
+          merge-multiple: true
 
-      - name: tst
+      - name: Generate checksums
         run: |
-          ls -lR binaries
-      # - name: Publish to crates.io
-      #   run: cargo publish
-      #   env:
-      #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          cd binary-archives
+          sha256sum * > sha256sums.txt
 
-      # - name: Publish to GitHub
-      #   run: |
-      #     URL=$(gh release create ${TAG_NAME} \
-      #       -t "Release ${TAG_NAME}" \
-      #       --generate-notes)
-      #     NEEDS_BUILD=true
-      #     echo "::notice title=Release URL::${URL}"
+      - name: Create GitHub release
+        run: |
+          TAG_NAME=${{ needs.tag.outputs.name }}
+          URL=$(gh release create "${TAG_NAME}"" \
+            -t "Release ${TAG_NAME}" \
+            --verify-tag \
+            --generate-notes)
+          echo "::notice title=Release URL::${URL}"
 
+      - name: Upload binary assets
+        run: |
+          TAG_NAME=${{ needs.tag.outputs.name }}
+          gh release upload "${TAG_NAME}" binary-archives/*
+          
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
