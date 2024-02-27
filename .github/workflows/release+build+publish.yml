@@ -26,17 +26,17 @@ jobs:
       - name: Extract version from Cargo.toml
         id: extract_version
         run: |
-          METADATA=$(cargo metadata --format-version 1 --no-deps)
-          VERSION=$(echo ${METADATA} | jq -r '.packages[] | select(.name == "nextver") | .version')
+          CARGO_METADATA=$(cargo metadata --format-version 1 --no-deps)
+          CARGO_VERSION=$(echo ${CARGO_METADATA} | jq -r '.packages[] | select(.name == "nextver") | .version')
 
-          if [ -z "${VERSION}" ]; then
-            echo "VERSION should not be empty, likely problem with metadata or jq command"
+          if [ -z "${CARGO_VERSION}" ]; then
+            echo "CARGO_VERSION should not be empty, likely problem with metadata or jq command"
             exit 1
           fi
 
-          echo "Extracted version: ${VERSION}"
-          echo "::notice title=Version::${VERSION}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: ${CARGO_VERSION}"
+          echo "::notice title=Cargo Version::${CARGO_VERSION}"
+          echo "cargo_version=${CARGO_VERSION}" >> "$GITHUB_OUTPUT"
 
       # some possibility for race condition here, but not a problem unless we're spamming this action
       - name: Create tag
@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         id: create_tag
         run: |
-          TAG_NAME="v${{ steps.extract_version.outputs.version }}"
+          TAG_NAME="v${{ steps.extract_version.outputs.cargo_version }}"
           echo "name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "::notice title=Tag Name::${TAG_NAME}"
 
@@ -79,10 +79,13 @@ jobs:
         include:
           - os: ubuntu-latest
             triple: x86_64-unknown-linux-gnu
+            ext: ""
           - os: windows-latest
             triple: x86_64-pc-windows-msvc
+            ext: .exe
           - os: macos-latest
             triple: x86_64-apple-darwin
+            ext: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,8 +104,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-release
-          path: target/${{ matrix.triple }}/release/nextver
+          name: ${{ matrix.triple }}-release
+          path: target/${{ matrix.triple }}/release/nextver${{ matrix.ext }}
 
   # release:
   #   runs-on: ubuntu-latest
