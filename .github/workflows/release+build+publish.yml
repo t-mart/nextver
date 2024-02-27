@@ -78,11 +78,6 @@ jobs:
           echo "::notice title=Needs Build::${NEEDS_BUILD}"
           echo "needs_build=${NEEDS_BUILD}" >> "$GITHUB_OUTPUT"
 
-# TODO:
-  # build on some runners, e.g. ubuntu-latest, macos-latest, windows-latest
-  # publish to crates.io
-  # publish binaries as assets to github release
-
   # Note that we just use the rust tooling that exists by default on the runners.
   # See https://github.com/actions/runner-images?tab=readme-ov-file#available-images
   build:
@@ -119,9 +114,8 @@ jobs:
           path: |
             ~/.cargo/registry
             target/
-          key: nextver-${{ matrix.triple }}-${{needs.tag.outputs.name}}-${{ hashFiles('**/Cargo.lock') }}
+          key: nextver-${{ matrix.triple }}-${{needs.tag.outputs.name}}
           restore-keys: |
-            nextver-${{ matrix.triple }}-${{needs.tag.outputs.name}}-
             nextver-${{ matrix.triple }}-
             nextver-
 
@@ -230,7 +224,10 @@ jobs:
       - name: Publish to crates.io
         run: |
           cd source
-          cargo publish
+
+          # pass --no-verify because we've already run tests and built binaries.
+          # its good, i promise.
+          cargo publish --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

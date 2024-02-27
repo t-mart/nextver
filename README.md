@@ -2,9 +2,9 @@
 
 A library for parsing and incrementing arbitrarily-formatted versions.
 
-Instead of conforming to a specific versioning scheme, this library allows you to define your
-own version format, parse version strings against it, and increment versions according to
-semantic and/or calendar rules.
+Instead of conforming to a specific versioning scheme, this library allows you
+to define your own version format, parse version strings against it, and
+increment versions according to semantic and/or calendar rules.
 
 Also comes with a [CLI](#cli).
 
@@ -13,7 +13,8 @@ This an abridged version of the documentation. For the full documentation, see
 
 ## Example
 
-*Below, the text in `<` and `>` brackets is a specifier. See what they mean [here](#table).*
+*Below, the text in `<` and `>` brackets is a specifier. See what they mean
+[here](#table).*
 
 Quickly get a next version:
 
@@ -32,34 +33,39 @@ assert_eq!(next, "1.3.0");
 
 nextver is built around three main concepts: Schemes, formats, and versions.
 
-- **Schemes** dictate the kinds of values allowed in versions and the rules for incrementing
-  them. (See the [table](#table) below.) They are modeled by the [`Scheme`] trait and
-  implemented by the the following structs:
+- **Schemes** dictate the kinds of values allowed in versions and the rules for
+  incrementing them. (See the [table](#table) below.) They are modeled by the
+  [`Scheme`] trait and implemented by the the following structs:
 
-  - [`Sem`]: A semantic versioning scheme. It is similar to [SemVer](https://semver.org/).
+  - [`Sem`]: A semantic versioning scheme. It is similar to
+    [SemVer](https://semver.org/).
   - [`CalSem`]: A calendar-semantic versioning scheme. It is similar to
-    [CalVer](https://calver.org/), but with an explicitly-required semantic part(s).
-  - [`Cal`]: A calendar versioning scheme. Its like [`CalSem`] but without semantic specifiers.
-    (This scheme is less useful in practice because there is no way to increment a version twice
-    within the same period of its least significant specifier.)
+    [CalVer](https://calver.org/), but with an explicitly-required semantic
+    part(s).
+  - [`Cal`]: A calendar versioning scheme. Its like [`CalSem`] but without
+    semantic specifiers. (This scheme is less useful in practice because there
+    is no way to increment a version twice within the same period of its least
+    significant specifier.)
 
-- **Formats** define the structure of a version string. They are modeled by the [`Format`]
-  struct. They contains a sequence of *specifier* and *literal text* tokens. For example,
-  `<MAJOR>.<MINOR>.<PATCH>` is a format string that can be turned into a [`Format`] object.
+- **Formats** define the structure of a version string. They are modeled by the
+  [`Format`] struct. They contains a sequence of *specifier* and *literal text*
+  tokens. For example, `<MAJOR>.<MINOR>.<PATCH>` is a format string that can be
+  turned into a [`Format`] object.
 
-- **Versions** are like Formats, but with actual values instead of specifiers. They represent a
-  a point in a project's development. These are modeled by the [`Version`] struct. They can be
-  incremented to new versions and compared amongst each other.
+- **Versions** are like Formats, but with actual values instead of specifiers.
+  They represent a a point in a project's development. These are modeled by the
+  [`Version`] struct. They can be incremented to new versions and compared
+  amongst each other.
 
 ## Format String Syntax
 
-Use any sequence of *specifiers* (listed below) and *literal text* in a format string. Specifiers
-are bracketed with `<` and `>`.
+Use any sequence of *specifiers* (listed below) and *literal text* in a format
+string. Specifiers are bracketed with `<` and `>`.
 
 ### Table
 
-In the "Example" column below, we reference a major of `1`, minor of `2`, patch of `3` and a
-date of `2001-02-03` (which is in the 4th week).
+In the "Example" column below, we reference a major of `1`, minor of `2`, patch
+of `3` and a date of `2001-02-03` (which is in the 4th week).
 
 | Specifier | Example | Sem | CalSem | Cal | Parse Width | Format Width | Description |
 |---|---|---|---|---|---|---|---|
@@ -80,8 +86,8 @@ Specifiers are case-sensitive. For example, `<major>` is not a valid specifier.
 
 ## CLI
 
-This crate provides a CLI that can be used to do some API functions straight from the command
-line.
+This crate provides a CLI that can be used to do some API functions straight
+from the command line.
 
 ### Installation
 
@@ -99,9 +105,11 @@ nextver --help
 
 To:
 
-- create a new git tag,
+- create and push a new git tag,
 - create a new GitHub release with binaries attached, and
-- publish a new version to <https://crates.io> (and update docs on <https://docs.rs>)
+- publish a new version to <https://crates.io> (and update docs on
+  <https://docs.rs>)
 
-simply push a commit to the `master` branch with an updated version number in `Cargo.toml`. The workflow
-file at `.github/workflows/release.yml` will take care of the rest.
+simply push a commit to the `master` branch with an updated version number in
+`Cargo.toml`. The workflow file at `.github/workflows/release+build+publish.yml`
+will take care of the rest. Make sure to pull afterwards.
