@@ -163,14 +163,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          # move file first so we don't get directory structure in the zip
+          mv "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}" .
           7z a -mx9 "${{ steps.make_paths.outputs.archive_path}}" \
-            "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}"
+            "${{ steps.make_paths.outputs.binary_filename }}"
 
       - name: Archive (macOS)
         if: runner.os == 'macOS'
         run: |
-          zip -r -9 "${{ steps.make_paths.outputs.archive_path}}" \
-            "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}"
+          # move file first so we don't get directory structure in the zip
+          mv "${{ steps.make_paths.outputs.binary_dir }}/${{ steps.make_paths.outputs.binary_filename }}" .
+          zip -9 "${{ steps.make_paths.outputs.archive_path}}" \
+            "${{ steps.make_paths.outputs.binary_filename }}"
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
