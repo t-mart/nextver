@@ -50,14 +50,15 @@ jobs:
 
           REF="refs/tags/${TAG_NAME}"
           if git rev-parse -q --verify "${REF}"; then
-            echo "Tag v$VERSION already exists, skipping release"
             NEEDS_BUILD=false
+            echo "Tag v$VERSION already exists, skipping release"
           else
+            NEEDS_BUILD=true
             git tag -a -m "Release ${TAG_NAME}" "${TAG_NAME}"
             git push origin "${TAG_NAME}"
           fi
 
-          echo "::notice title=Needs Build::true"
+          echo "::notice title=Needs Build::${NEEDS_BUILD}"
           echo "needs_build=${NEEDS_BUILD}" >> "$GITHUB_OUTPUT"      
 
 # TODO:
