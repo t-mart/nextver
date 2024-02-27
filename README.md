@@ -94,3 +94,14 @@ cargo install nextver
 ```sh
 nextver --help
 ```
+
+## DevOps
+
+To:
+
+- create a new git tag,
+- create a new GitHub release with binaries attached, and
+- publish a new version to <https://crates.io> (and update docs on <https://docs.rs>)
+
+simply push a commit to the `master` branch with an updated version number in `Cargo.toml`. The workflow
+file at `.github/workflows/release.yml` will take care of the rest.
