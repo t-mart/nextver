@@ -228,7 +228,9 @@ jobs:
           gh release upload "${TAG_NAME}" ../binary-archives/*
           
       - name: Publish to crates.io
-        run: cargo -C source publish
+        run: |
+          cd source
+          cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
