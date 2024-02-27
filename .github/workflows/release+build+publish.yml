@@ -188,7 +188,7 @@ jobs:
       - name: Create GitHub release
         run: |
           TAG_NAME=${{ needs.tag.outputs.name }}
-          URL=$(gh release create "${TAG_NAME}"" \
+          URL=$(gh release create "${TAG_NAME}" \
             -t "Release ${TAG_NAME}" \
             --verify-tag \
             --generate-notes)
