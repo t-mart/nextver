@@ -54,6 +54,7 @@ jobs:
             echo "Tag v$VERSION already exists, skipping release"
           else
             NEEDS_BUILD=true
+            gh auth setup-git
             git tag -a -m "Release ${TAG_NAME}" "${TAG_NAME}"
             git push origin "${TAG_NAME}"
           fi
