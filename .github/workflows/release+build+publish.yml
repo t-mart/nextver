@@ -115,7 +115,7 @@ jobs:
           echo "binary_filename=${BINARY_FILENAME}" >> "$GITHUB_OUTPUT"
 
           # the filename of the archive to create
-          ARCHIVE_FILENAME=nextver-${{ matrix.triple }}-v${{ needs.tag.outputs.name }}${{ matrix.archive_ext }}
+          ARCHIVE_FILENAME=nextver-${{ matrix.triple }}-${{ needs.tag.outputs.name }}${{ matrix.archive_ext }}
           echo "archive_filename=${ARCHIVE_FILENAME}" >> "$GITHUB_OUTPUT"
 
           # the relative path of the archive to create
