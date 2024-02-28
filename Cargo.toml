@@ -9,6 +9,20 @@ homepage = "https://github.com/t-mart/nextver"
 description = "A library for parsing and incrementing arbitrarily-formatted versions."
 license = "MIT"
 edition = "2021"
+keywords = [
+    "version",
+    "semver",
+    "calver",
+    "increment",
+    "bump",
+    "next",
+    "release",
+    "tag",
+    "git",
+    "vcs",
+    "versioning",
+]
+categories = ["development-tools::version-management"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

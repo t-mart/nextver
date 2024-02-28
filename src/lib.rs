@@ -203,6 +203,7 @@
 //! ```
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
+#![warn(clippy::cargo)]
 
 mod format;
 mod scheme;
