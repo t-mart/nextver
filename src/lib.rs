@@ -204,7 +204,6 @@
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 
-mod error;
 mod format;
 mod scheme;
 mod specifier;
