@@ -1,3 +1,8 @@
+//! A CLI for the nextver library.
+#![warn(missing_docs)]
+#![warn(clippy::pedantic)]
+#![warn(clippy::cargo)]
+
 use clap::{arg, command, Parser, Subcommand, ValueEnum};
 use core::str::FromStr;
 use nextver::prelude::*;
@@ -83,11 +88,11 @@ fn next(
     // functions to get the semantic specifier from the option, that error if we need it but
     // don't have it
     let sem_spec = || {
-        spec.map(|s| s.to_sem_level())
+        spec.map(SemLevelArg::to_sem_level)
             .ok_or(NextVerCliError::NoSemanticSpecifier)
     };
     let cal_sem_spec = || {
-        spec.map(|s| s.to_calsem_specifier())
+        spec.map(SemLevelArg::to_calsem_specifier)
             .transpose()?
             .ok_or(NextVerCliError::NoSemanticSpecifier)
     };
@@ -128,7 +133,7 @@ enum SemLevelArg {
 
 impl SemLevelArg {
     fn to_sem_level(&self) -> SemLevel {
-        use SemLevelArg::*;
+        use SemLevelArg::{Major, Minor, Patch};
         match self {
             Major => SemLevel::Major,
             Minor => SemLevel::Minor,
@@ -137,7 +142,7 @@ impl SemLevelArg {
     }
 
     fn to_calsem_specifier(&self) -> Result<CalSemLevel, NextVerCliError> {
-        use SemLevelArg::*;
+        use SemLevelArg::{Major, Minor, Patch};
         match self {
             Major => Err(NextVerCliError::MajorSpecifierWithCalsem),
             Minor => Ok(CalSemLevel::Minor),
@@ -240,7 +245,7 @@ fn main() -> std::process::ExitCode {
             exit_code
         }
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("{e}");
 
             // special handling for CLI usage error
             if e == NextVerCliError::NoSemanticSpecifier {
