@@ -1,12 +1,13 @@
-use crate::error::NextError;
+use crate::version::NextError;
 use chrono::{Datelike, NaiveDate};
 use core::fmt::{self, Debug, Display};
 
 pub(crate) type SpecValue = u32;
 pub(crate) type SpecValueResult = Result<SpecValue, NextError>;
-type NextDateFn = fn(&NaiveDate) -> SpecValueResult;
+type NextDateResultFn = fn(NaiveDate) -> SpecValueResult;
+type NextDateFn = fn(NaiveDate) -> SpecValue;
 
-fn full_year_next(date: &NaiveDate) -> SpecValueResult {
+fn full_year_next(date: NaiveDate) -> SpecValueResult {
     // Note: Spec doesn't comment about years that are not 4-digit, so allow them
     let year = date.year();
     if year < 0 {
@@ -15,11 +16,12 @@ fn full_year_next(date: &NaiveDate) -> SpecValueResult {
         // library) works
         Err(NextError::NegativeYearValue { year })
     } else {
+        #[allow(clippy::cast_sign_loss)]
         Ok(year as SpecValue)
     }
 }
 
-fn short_year_next(date: &NaiveDate) -> SpecValueResult {
+fn short_year_next(date: NaiveDate) -> SpecValueResult {
     let year = date.year();
     // while `year % 100` might seem like the right call, the spec allows this to be >=100 so that,
     // for example, `2001`, `2101`, `3001` are disambiguated as 1, 101, and 1001, respectively.
@@ -28,24 +30,25 @@ fn short_year_next(date: &NaiveDate) -> SpecValueResult {
         // negatives would require a sign to round trip, so disallow
         Err(NextError::NegativeYearValue { year })
     } else {
+        #[allow(clippy::cast_sign_loss)]
         Ok(diff as SpecValue)
     }
 }
 
-fn weeks_from_sunday_next(date: &NaiveDate) -> SpecValueResult {
+fn weeks_from_sunday_next(date: NaiveDate) -> SpecValue {
     let days_from_sunday = date.weekday().num_days_from_sunday();
 
     // This formula taken from a internal (`pub(crate)`) API inside chrono::NaiveDate. I'm unsure
     // why it's not true `pub`. hopefully safe.
-    Ok((6 + date.ordinal() - days_from_sunday) / 7)
+    (6 + date.ordinal() - days_from_sunday) / 7
 }
 
-fn month_next(date: &NaiveDate) -> SpecValueResult {
-    Ok(date.month())
+fn month_next(date: NaiveDate) -> SpecValue {
+    date.month()
 }
 
-fn day_next(date: &NaiveDate) -> SpecValueResult {
-    Ok(date.day())
+fn day_next(date: NaiveDate) -> SpecValue {
+    date.day()
 }
 
 pub(crate) trait Specifier: PartialEq + Eq + Debug + Display + Sized + 'static {
@@ -57,7 +60,7 @@ pub(crate) trait Specifier: PartialEq + Eq + Debug + Display + Sized + 'static {
         self.format_width() > 0
     }
 
-    fn format_value(&self, value: &SpecValue) -> String {
+    fn format_value(&self, value: SpecValue) -> String {
         format!("{:0len$}", value, len = self.format_width())
     }
 
@@ -92,19 +95,15 @@ pub(crate) enum ParseWidth {
 impl ParseWidth {
     pub(crate) fn min_width(&self) -> usize {
         match self {
-            Self::AtLeastOne => 1,
-            Self::AtLeastTwo => 2,
-            Self::OneOrTwo => 1,
-            Self::Two => 2,
+            Self::OneOrTwo | Self::AtLeastOne => 1,
+            Self::AtLeastTwo | Self::Two => 2,
         }
     }
 
     pub(crate) fn max_width(&self) -> usize {
         match self {
-            Self::AtLeastOne => usize::MAX,
-            Self::AtLeastTwo => usize::MAX,
-            Self::OneOrTwo => 2,
-            Self::Two => 2,
+            Self::AtLeastOne | Self::AtLeastTwo => usize::MAX,
+            Self::OneOrTwo |Self::Two => 2,
         }
     }
 }
@@ -121,7 +120,7 @@ const SEM_CAN_BE_ZERO: bool = true;
 
 const YEAR_FULL_FORMAT_STRINGS: &[u8] = b"<YYYY>";
 const YEAR_FULL_FORMAT_WIDTH: usize = 0;
-const YEAR_FULL_NEXT_FN: NextDateFn = full_year_next;
+const YEAR_FULL_NEXT_FN: NextDateResultFn = full_year_next;
 const YEAR_FULL_CAN_BE_ZERO: bool = true; // note that 0 is 1 BCE
 const YEAR_FULL_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastOne;
 
@@ -135,7 +134,7 @@ const YEAR_ZERO_PADDED_FORMAT_WIDTH: usize = 2;
 const YEAR_ZERO_PADDED_CAN_BE_ZERO: bool = true;
 const YEAR_ZERO_PADDED_PARSE_WIDTH: ParseWidth = ParseWidth::AtLeastTwo;
 
-const YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateFn = short_year_next;
+const YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN: NextDateResultFn = short_year_next;
 
 const MONTH_SHORT_FORMAT_STRINGS: &[u8] = b"<MM>";
 const MONTH_SHORT_FORMAT_WIDTH: usize = 0;
@@ -200,11 +199,11 @@ pub(crate) enum SemSpecifier {
 }
 
 impl SemSpecifier {
-    pub(crate) fn next_value(&self, cur_value: &SpecValue, level: &SemLevel) -> SpecValue {
+    pub(crate) fn next_value(&self, cur_value: SpecValue, level: SemLevel) -> SpecValue {
         match (self, level) {
-            (_, _) if level.spec() == self => *cur_value + 1,
+            (_, _) if level.spec() == self => cur_value + 1,
             (_, SemLevel::Major) | (SemSpecifier::Patch, SemLevel::Minor) => 0,
-            _ => *cur_value,
+            _ => cur_value,
         }
     }
 }
@@ -301,16 +300,15 @@ pub(crate) enum CalSpecifier {
 }
 
 impl CalSpecifier {
-    pub(crate) fn next_value(&self, date: &NaiveDate) -> SpecValueResult {
+    pub(crate) fn next_value(&self, date: NaiveDate) -> SpecValueResult {
         match &self {
             CalSpecifier::Year(type_) => match type_ {
                 YearType::Full => YEAR_FULL_NEXT_FN(date),
-                YearType::Short => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-                YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
+                YearType::Short | YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
             },
-            CalSpecifier::Month(_) => MONTH_NEXT_FN(date),
-            CalSpecifier::Week(_) => WEEK_NEXT_FN(date),
-            CalSpecifier::Day(_) => DAY_NEXT_FN(date),
+            CalSpecifier::Month(_) => Ok(MONTH_NEXT_FN(date)),
+            CalSpecifier::Week(_) => Ok(WEEK_NEXT_FN(date)),
+            CalSpecifier::Day(_) => Ok(DAY_NEXT_FN(date)),
         }
     }
 }
@@ -413,7 +411,7 @@ impl Specifier for CalSpecifier {
         use CalSpecifier as C;
         matches!(
             (self, other),
-            (C::Year(_), C::Month(_)) | (C::Year(_), C::Week(_)) | (C::Month(_), C::Day(_))
+            (C::Year(_), C::Month(_) | C::Week(_)) | (C::Month(_), C::Day(_))
         )
     }
 }
@@ -447,17 +445,16 @@ pub(crate) enum CalSemCalSpecifier {
 }
 
 impl CalSemCalSpecifier {
-    pub(crate) fn next_value(&self, date: &NaiveDate) -> SpecValueResult {
+    pub(crate) fn next_value(&self, date: NaiveDate) -> SpecValueResult {
         use CalSemCalSpecifier as CSC;
         match &self {
             CSC::Year(type_) => match type_ {
                 YearType::Full => YEAR_FULL_NEXT_FN(date),
-                YearType::Short => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
-                YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
+                YearType::Short | YearType::ZeroPadded => YEAR_SHORT_AND_ZERO_PADDED_NEXT_FN(date),
             },
-            CSC::Month(_) => MONTH_NEXT_FN(date),
-            CSC::Week(_) => WEEK_NEXT_FN(date),
-            CSC::Day(_) => DAY_NEXT_FN(date),
+            CSC::Month(_) => Ok(MONTH_NEXT_FN(date)),
+            CSC::Week(_) => Ok(WEEK_NEXT_FN(date)),
+            CSC::Day(_) => Ok(DAY_NEXT_FN(date)),
         }
     }
 }
@@ -469,16 +466,16 @@ pub(crate) enum CalSemSemSpecifier {
 }
 
 impl CalSemSemSpecifier {
-    pub(crate) fn next_value(&self, cur_value: &SpecValue, level: &CalSemLevel) -> SpecValue {
+    pub(crate) fn next_value(&self, cur_value: SpecValue, level: CalSemLevel) -> SpecValue {
         use CalSemSemSpecifier as CSS;
         match level {
             CalSemLevel::Minor => match self {
-                CSS::Minor => *cur_value + 1,
+                CSS::Minor => cur_value + 1,
                 CSS::Patch => 0,
             },
             CalSemLevel::Patch => match self {
-                CSS::Minor => *cur_value,
-                CSS::Patch => *cur_value + 1,
+                CSS::Minor => cur_value,
+                CSS::Patch => cur_value + 1,
             },
         }
     }
@@ -546,7 +543,7 @@ impl Specifier for CalSemSpecifier {
                 NonYearType::Short => DAY_SHORT_FORMAT_WIDTH,
                 NonYearType::ZeroPadded => DAY_ZERO_PADDED_FORMAT_WIDTH,
             },
-            S::Sem(CSS::Minor) | S::Sem(CSS::Patch) => SEM_FORMAT_WIDTH,
+            S::Sem(CSS::Minor | CSS::Patch) => SEM_FORMAT_WIDTH,
         }
     }
 
@@ -580,13 +577,17 @@ impl Specifier for CalSemSpecifier {
             S::Cal(CSC::Year(YearType::Full)) => YEAR_FULL_PARSE_WIDTH,
             S::Cal(CSC::Year(YearType::Short)) => YEAR_SHORT_PARSE_WIDTH,
             S::Cal(CSC::Year(YearType::ZeroPadded)) => YEAR_ZERO_PADDED_PARSE_WIDTH,
-            S::Cal(CSC::Month(NonYearType::ZeroPadded))
-            | S::Cal(CSC::Week(NonYearType::ZeroPadded))
-            | S::Cal(CSC::Day(NonYearType::ZeroPadded)) => MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH,
-            S::Cal(CSC::Month(NonYearType::Short))
-            | S::Cal(CSC::Week(NonYearType::Short))
-            | S::Cal(CSC::Day(NonYearType::Short)) => MONTH_WEEK_DAY_SHORT_PARSE_WIDTH,
-            S::Sem(CSS::Minor) | S::Sem(CSS::Patch) => SEM_PARSE_WIDTH,
+            S::Cal(
+                CSC::Month(NonYearType::ZeroPadded)
+                | CSC::Week(NonYearType::ZeroPadded)
+                | CSC::Day(NonYearType::ZeroPadded),
+            ) => MONTH_WEEK_DAY_ZERO_PADDED_PARSE_WIDTH,
+            S::Cal(
+                CSC::Month(NonYearType::Short)
+                | CSC::Week(NonYearType::Short)
+                | CSC::Day(NonYearType::Short),
+            ) => MONTH_WEEK_DAY_SHORT_PARSE_WIDTH,
+            S::Sem(CSS::Minor | CSS::Patch) => SEM_PARSE_WIDTH,
         }
     }
 
@@ -603,7 +604,7 @@ impl Specifier for CalSemSpecifier {
             S::Cal(CSC::Month(_)) => MONTH_CAN_BE_ZERO,
             S::Cal(CSC::Week(_)) => WEEK_CAN_BE_ZERO,
             S::Cal(CSC::Day(_)) => DAY_CAN_BE_ZERO,
-            S::Sem(CSS::Minor) | S::Sem(CSS::Patch) => SEM_CAN_BE_ZERO,
+            S::Sem(CSS::Minor | CSS::Patch) => SEM_CAN_BE_ZERO,
         }
     }
 
@@ -613,18 +614,17 @@ impl Specifier for CalSemSpecifier {
         use CalSemSpecifier as S;
         matches!(
             (self, other),
-            (S::Cal(CSC::Year(_)), S::Cal(CSC::Month(_)))
-                | (S::Cal(CSC::Year(_)), S::Cal(CSC::Week(_)))
-                | (S::Cal(CSC::Year(_)), S::Sem(CSS::Minor))
-                | (S::Cal(CSC::Year(_)), S::Sem(CSS::Patch))
-                | (S::Cal(CSC::Month(_)), S::Cal(CSC::Day(_)))
-                | (S::Cal(CSC::Month(_)), S::Sem(CSS::Minor))
-                | (S::Cal(CSC::Month(_)), S::Sem(CSS::Patch))
-                | (S::Cal(CSC::Week(_)), S::Sem(CSS::Minor))
-                | (S::Cal(CSC::Week(_)), S::Sem(CSS::Patch))
-                | (S::Cal(CSC::Day(_)), S::Sem(CSS::Minor))
-                | (S::Cal(CSC::Day(_)), S::Sem(CSS::Patch))
-                | (S::Sem(CSS::Minor), S::Sem(CSS::Patch))
+            (
+                S::Cal(CSC::Year(_)),
+                S::Cal(CSC::Month(_) | CSC::Week(_)) | S::Sem(CSS::Minor | CSS::Patch)
+            ) | (
+                S::Cal(CSC::Month(_)),
+                S::Cal(CSC::Day(_)) | S::Sem(CSS::Minor | CSS::Patch)
+            ) | (S::Cal(CSC::Week(_) | CSC::Day(_)), S::Sem(CSS::Minor))
+                | (
+                    S::Cal(CSC::Week(_) | CSC::Day(_)) | S::Sem(CSS::Minor),
+                    S::Sem(CSS::Patch)
+                )
         )
     }
 }
@@ -794,6 +794,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn cal_sem_ordering() {
         use CalSemCalSpecifier::*;
         use CalSemSemSpecifier::*;

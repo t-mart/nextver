@@ -1,5 +1,4 @@
 use crate::{
-    error::{DateError, VersionError, NextError},
     format::{Format, FormatToken},
     scheme::{Cal, CalSem, Scheme, Sem},
     specifier::{CalSemLevel, CalSemSpecifier, Level, SpecValue, SpecValueResult, Specifier},
@@ -12,6 +11,36 @@ use core::{
     ptr,
     str::{self, FromStr},
 };
+
+/// An error that occurred while incrementing a [`Version`](crate::Version).
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum NextError {
+    /// When updating a [`Cal`](crate::Cal) version, the date provided yielded an identical version.
+    #[error("date provided should yield a version that is newer/greater than the current version")]
+    NoCalendarChange,
+
+    /// When updating a [`Cal`](crate::Cal) or [`CalSem`](crate::CalSem) version, the date year was
+    /// negative.
+    #[error("year `{year}` should not be negative when formatted`")]
+    NegativeYearValue {
+        /// The year value
+        year: i32,
+    },
+
+    /// When updating/incrementing a [`Sem`](crate::Sem) or [`CalSem`](crate::CalSem) version, the
+    /// semantic level is not in the format.
+    #[error("`{spec}` was not found in format, use one that is")]
+    SemLevelNotInFormat {
+        /// The semantic specifier
+        spec: String,
+    },
+
+    /// The new date passed to a `next` call was *before* the date represented by the current
+    /// version.
+    #[error("new date should be after date in version")]
+    NewDateIsBefore,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VersionToken<'vs, S: Scheme> {
@@ -38,7 +67,7 @@ impl<'vs, S: Scheme> Display for VersionToken<'vs, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VersionToken::Value { value, spec } => {
-                let formatted = spec.format_value(value);
+                let formatted = spec.format_value(*value);
                 f.write_str(&formatted)
             }
             VersionToken::Literal(text) => {
@@ -55,7 +84,7 @@ impl<'vs, S: Scheme> PartialOrd for VersionToken<'vs, S> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         // it only makes sense to compare values if they are the same type, thus, only a partial
         // ordering.
-        use VersionToken::*;
+        use VersionToken::{Literal, Value};
         match (self, other) {
             (Literal(a), Literal(b)) => {
                 // there is no ordering for literals: they're either equal or not
@@ -109,6 +138,21 @@ impl<'fs, S: Scheme> From<&FormatToken<'fs, S>> for UnescapedFormatToken<S> {
     }
 }
 
+/// An error that occurred while parsing a version string.
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum VersionError {
+    /// The format string's structure doesn't match the version string's.
+    #[error("version `{version_string}` should match format `{format_string}`")]
+    VersionFormatMismatch {
+        /// The version string
+        version_string: String,
+        /// The format string
+        format_string: String,
+    },
+}
+
 /// A Version object represents a specific point in a project's development, comprised of *values*
 /// and *literal text*. It's structure is defined by a [`Format`]. Versions can be displayed
 /// (`to_string()`), incremented (`next()`), and compared (`partial_cmp()`).
@@ -150,7 +194,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
     }
     pub(crate) fn parse(version_str: &'vs str, format: &Format<S>) -> Result<Self, VersionError> {
         let unescaped_format_tokens: Vec<UnescapedFormatToken<S>> =
-            format.tokens.iter().map(|t| t.into()).collect();
+            format.tokens.iter().map(Into::into).collect();
         Self::parse_rec(version_str.as_bytes(), &unescaped_format_tokens, &[])
             .map(|tokens| Version::new(tokens))
             .ok_or(VersionError::VersionFormatMismatch {
@@ -192,7 +236,7 @@ impl<'vs, S: Scheme> Version<'vs, S> {
                     if !next.is_ascii_digit() {
                         return None; // all specs only match digits, so this idx is unparseable
                     }
-                    value = value * 10 + (next - b'0') as SpecValue;
+                    value = value * 10 + u32::from(next - b'0');
 
                     let cur_width = idx + 1;
                     if cur_width < min_parse_width {
@@ -233,14 +277,14 @@ impl<'vs, S: Scheme> Version<'vs, S> {
 
     fn new_map_value_tokens<F>(&self, mut f: F) -> Result<Self, NextError>
     where
-        F: FnMut((&SpecValue, &S::Specifier)) -> SpecValueResult,
+        F: FnMut((SpecValue, &S::Specifier)) -> SpecValueResult,
     {
         let mut new_tokens = Vec::with_capacity(self.tokens.len());
 
         for token in &self.tokens {
             let new_token = match token {
                 VersionToken::Value { value, spec } => {
-                    let new_value = f((value, spec))?;
+                    let new_value = f((*value, spec))?;
                     VersionToken::Value {
                         value: new_value,
                         spec: *spec,
@@ -269,10 +313,10 @@ impl<'vs, S: Scheme> PartialOrd for Version<'vs, S> {
     /// - For two given value tokens, they are not of the same specifier type. E.g., one is a
     ///  `<YYYY>` value, one is a `<YY>` value.
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.tokens.len() != other.tokens.len() {
-            None
-        } else {
+        if self.tokens.len() == other.tokens.len() {
             self.tokens.partial_cmp(&other.tokens)
+        } else {
+            None
         }
     }
 }
@@ -288,11 +332,11 @@ impl<'vs> Version<'vs, Sem> {
     /// use nextver::prelude::*;;
     ///
     /// let cur = Sem::new_version("<MAJOR>.<MINOR>.<PATCH>", "1.2.3")?;
-    /// let next = cur.next(&SemLevel::Major)?;
+    /// let next = cur.next(SemLevel::Major)?;
     /// assert_eq!("2.0.0", &next.to_string());
     /// assert!(cur < next);
     ///
-    /// let next_next = next.next(&SemLevel::Patch)?;
+    /// let next_next = next.next(SemLevel::Patch)?;
     /// assert_eq!("2.0.1", &next_next.to_string());
     /// assert!(next < next_next);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -303,7 +347,7 @@ impl<'vs> Version<'vs, Sem> {
     /// Returns a [`Result::Err`] of...
     ///
     /// - [`NextError::SemLevelNotInFormat`] if the specifier of `level` is not in format.
-    pub fn next(&self, level: &SemLevel) -> Result<Self, NextError> {
+    pub fn next(&self, level: SemLevel) -> Result<Self, NextError> {
         let mut spec_found = false;
         let level_spec = level.as_ref().spec();
 
@@ -311,7 +355,7 @@ impl<'vs> Version<'vs, Sem> {
             if level_spec == this_spec {
                 spec_found = true;
             };
-            let next_value = this_spec.next_value(cur_value, level.as_ref());
+            let next_value = this_spec.next_value(cur_value, level);
             Ok(next_value)
         })?;
 
@@ -323,6 +367,29 @@ impl<'vs> Version<'vs, Sem> {
 
         Ok(next_version)
     }
+}
+
+/// Errors around dates, as used to update [`Cal`](crate::Cal) and [`CalSem`](crate::CalSem)
+/// versions.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum DateError {
+    /// Arguments to [`Date::explicit`](crate::Date::explicit) do not represent a valid date.
+    #[error("year ({year}), month ({month}), and day ({day}) should represent a valid date")]
+    InvalidDateArguments {
+        /// The year value
+        year: i32,
+        /// The month value
+        month: u32,
+        /// The day value
+        day: u32,
+    },
+
+    /// The date string could not be parsed.
+    ///
+    /// See [`chrono::NaiveDate::from_str`] and [`chrono::ParseError`].
+    #[error(transparent)]
+    UnparseableDate(#[from] chrono::ParseError),
 }
 
 /// Ways to specify a date.
@@ -339,26 +406,32 @@ pub struct Date(NaiveDate);
 
 impl Date {
     /// Returns a new [`Date`] representing the current date in UTC at the time of this call.
+    #[must_use]
     pub fn utc_now() -> Self {
         Self(Utc::now().date_naive())
     }
 
     /// Returns a new [`Date`] representing the current date in the system's local timezone at the
     /// time of this call.
+    #[must_use]
     pub fn local_now() -> Self {
         Self(Local::now().date_naive())
     }
 
-    /// Returns result of a new [`Date`] representing the given date, or an error of:
-    /// - [`DateError::InvalidDateArguments`] if the date values do not represent a valid date.
+    /// Returns result of a new [`Date`] representing the given Date.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DateError::InvalidDateArguments`] if the date values do not represent a valid
+    /// date.
     pub fn explicit(year: i32, month: u32, day: u32) -> Result<Self, DateError> {
         NaiveDate::from_ymd_opt(year, month, day)
             .map(Self)
             .ok_or(DateError::InvalidDateArguments { year, month, day })
     }
 
-    pub(crate) fn as_naive_date(&self) -> &NaiveDate {
-        &self.0
+    pub(crate) fn as_naive_date(self) -> NaiveDate {
+        self.0
     }
 }
 
@@ -390,7 +463,7 @@ impl<'vs> Version<'vs, Cal> {
     /// `date`.
     ///
     /// If `date` is before the date in this version, an error is returned. (See
-    /// [Self::next_unchecked] to skip this check.)
+    /// [`Self::next_unchecked`] to skip this check.)
     ///
     /// # Example
     ///
@@ -401,7 +474,7 @@ impl<'vs> Version<'vs, Cal> {
     /// # let date = Date::explicit(2024, 2, 23)?;
     ///
     /// let cur = Cal::new_version("<YYYY>.<MM>", "2024.1")?;
-    /// let next = cur.next(&date)?;
+    /// let next = cur.next(date)?;
     /// assert_eq!("2024.2", &next.to_string());
     /// assert!(cur < next);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -415,7 +488,7 @@ impl<'vs> Version<'vs, Cal> {
     /// - [`NextError::NewDateIsBefore`] if `date` is before the date in this version.
     /// - [`NextError::NegativeYearValue`] if the year value would be negative. (Year specifiers
     ///   have lower bounds. See the [table](crate#table) for more information.)
-    pub fn next(&self, date: &Date) -> Result<Self, NextError> {
+    pub fn next(&self, date: Date) -> Result<Self, NextError> {
         // track if the calendar was moved forward in time, so we can error if not
         let mut cal_moved_fwd = false;
 
@@ -423,12 +496,12 @@ impl<'vs> Version<'vs, Cal> {
             let next_value = this_spec.next_value(date.as_naive_date())?;
 
             if !cal_moved_fwd {
-                match next_value.cmp(cur_value) {
+                match next_value.cmp(&cur_value) {
                     Ordering::Greater => cal_moved_fwd = true,
                     Ordering::Less => {
                         return Err(NextError::NewDateIsBefore);
                     }
-                    _ => {}
+                    Ordering::Equal => {}
                 }
             }
 
@@ -443,10 +516,15 @@ impl<'vs> Version<'vs, Cal> {
     }
 
     /// Same as [`next`](struct.Version.html#method.next-1), but without checking if `date` is after
-    /// the date in this version. In other words, this method will never error with
+    /// the date in this version.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`next`](struct.Version.html#method.next-1), but without
     /// [`NextError::NewDateIsBefore`].
-    pub fn next_unchecked(&self, date: &Date) -> Result<Self, NextError> {
-        let new_version = self.new_map_value_tokens(|(_, this_spec)| this_spec.next_value(date.as_naive_date()))?;
+    pub fn next_unchecked(&self, date: Date) -> Result<Self, NextError> {
+        let new_version =
+            self.new_map_value_tokens(|(_, this_spec)| this_spec.next_value(date.as_naive_date()))?;
         Ok(new_version)
     }
 }
@@ -454,8 +532,8 @@ impl<'vs> Version<'vs, Cal> {
 impl<'vs> Version<'vs, CalSem> {
     fn next_base(
         &self,
-        date: &Date,
-        level: &CalSemLevel,
+        date: Date,
+        level: CalSemLevel,
         err_on_date_before: bool,
     ) -> Result<Self, NextError> {
         // track if the semantic level was found in the format string.
@@ -470,7 +548,7 @@ impl<'vs> Version<'vs, CalSem> {
                 CalSemSpecifier::Cal(cal_spec) => {
                     let new_value = cal_spec.next_value(date.as_naive_date())?;
                     if !cal_moved_fwd {
-                        match new_value.cmp(cur_value) {
+                        match new_value.cmp(&cur_value) {
                             Ordering::Greater => cal_moved_fwd = true,
                             Ordering::Less if err_on_date_before => {
                                 return Err(NextError::NewDateIsBefore);
@@ -528,7 +606,7 @@ impl<'vs> Version<'vs, CalSem> {
     /// # let date = Date::explicit(2024, 2, 23)?;
     ///
     /// let cur = CalSem::new_version("<YYYY>.<MM>.<PATCH>", "2024.1.123")?;
-    /// let next = cur.next(&date, &CalSemLevel::Patch)?;
+    /// let next = cur.next(date, CalSemLevel::Patch)?;
     /// assert_eq!("2024.2.0", &next.to_string());
     /// assert!(cur < next);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -543,7 +621,7 @@ impl<'vs> Version<'vs, CalSem> {
     /// # let date = Date::explicit(2024, 2, 23)?;
     ///
     /// let cur = CalSem::new_version("<YYYY>.<MM>.<PATCH>", "2024.2.123")?;
-    /// let next = cur.next(&date, &CalSemLevel::Patch)?;
+    /// let next = cur.next(date, CalSemLevel::Patch)?;
     /// assert_eq!("2024.2.124", &next.to_string());
     /// assert!(cur < next);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -558,14 +636,18 @@ impl<'vs> Version<'vs, CalSem> {
     /// - [`NextError::NegativeYearValue`] if the year value would be negative. (Year specifiers
     ///   have lower bounds. See the [table](crate#table) for more information.)
     /// - [`NextError::SemLevelNotInFormat`] if the specifier of `level` is not in format.
-    pub fn next(&self, date: &Date, level: &CalSemLevel) -> Result<Self, NextError> {
+    pub fn next(&self, date: Date, level: CalSemLevel) -> Result<Self, NextError> {
         self.next_base(date, level, true)
     }
 
     /// Same as [`next`](struct.Version.html#method.next-2), but without checking if `date` is after
-    /// the date in this version. In other words, this method will never error with
+    /// the date in this version.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`next`](struct.Version.html#method.next-2), but without
     /// [`NextError::NewDateIsBefore`].
-    pub fn next_unchecked(&self, date: &Date, level: &CalSemLevel) -> Result<Self, NextError> {
+    pub fn next_unchecked(&self, date: Date, level: CalSemLevel) -> Result<Self, NextError> {
         self.next_base(date, level, false)
     }
 }
@@ -574,7 +656,7 @@ impl<'vs, S: Scheme> Display for Version<'vs, S> {
     /// Returns the rendered version string
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for token in &self.tokens {
-            write!(f, "{}", token)?
+            write!(f, "{token}")?;
         }
 
         Ok(())
@@ -871,7 +953,7 @@ mod tests {
         for (format_str, version_str, level, expected_str) in args {
             let format = Sem::new_format(format_str).unwrap();
             let version = Version::parse(version_str, &format).unwrap();
-            let next = version.next(&level).unwrap();
+            let next = version.next(level).unwrap();
             assert_eq!(expected_str, next.to_string());
         }
     }
@@ -903,7 +985,7 @@ mod tests {
         for (format_str, version_str, date, expected_str) in args {
             let format = Cal::new_format(format_str).unwrap();
             let version = Version::parse(version_str, &format).unwrap();
-            let next = version.next(&date.unwrap()).unwrap();
+            let next = version.next(date.unwrap()).unwrap();
             assert_eq!(expected_str, next.to_string());
         }
     }
@@ -951,7 +1033,7 @@ mod tests {
         for (format_str, version_str, date, level, expected_str) in args {
             let format = CalSem::new_format(format_str).unwrap();
             let version = Version::parse(version_str, &format).unwrap();
-            let next = version.next(&date.unwrap(), &level).unwrap();
+            let next = version.next(date.unwrap(), level).unwrap();
             assert_eq!(next.to_string(), expected_str);
         }
     }
@@ -967,11 +1049,8 @@ mod tests {
         for (format_str, version_str, level) in args {
             let format = Sem::new_format(format_str).unwrap();
             let version = Version::parse(version_str, &format).unwrap();
-            let next = version.next(&level);
-            assert!(matches!(
-                next,
-                Err(NextError::SemLevelNotInFormat { .. })
-            ));
+            let next = version.next(level);
+            assert!(matches!(next, Err(NextError::SemLevelNotInFormat { .. })));
         }
     }
 
@@ -979,18 +1058,15 @@ mod tests {
     fn test_calsem_not_in_format() {
         let format = CalSem::new_format("<YYYY>.<0M>.<0D>.<PATCH>").unwrap();
         let version = Version::parse("2023.12.04.2", &format).unwrap();
-        let next = version.next(&Date::explicit(2024, 1, 1).unwrap(), &CalSemLevel::Minor);
-        assert!(matches!(
-            next,
-            Err(NextError::SemLevelNotInFormat { .. })
-        ));
+        let next = version.next(Date::explicit(2024, 1, 1).unwrap(), CalSemLevel::Minor);
+        assert!(matches!(next, Err(NextError::SemLevelNotInFormat { .. })));
     }
 
     #[test]
     fn test_cal_no_cal_change() {
         let format = Cal::new_format("<YYYY>.<0M>.<0D>").unwrap();
         let version = Version::parse("2023.12.04", &format).unwrap();
-        let next = version.next(&Date::explicit(2023, 12, 4).unwrap());
+        let next = version.next(Date::explicit(2023, 12, 4).unwrap());
         assert!(matches!(next, Err(NextError::NoCalendarChange)));
     }
 
@@ -998,7 +1074,7 @@ mod tests {
     fn test_cal_neg_year_full_year() {
         let format = Cal::new_format("<YYYY>").unwrap();
         let version = Version::parse("2023", &format).unwrap();
-        let next = version.next(&Date::explicit(-1, 1, 1).unwrap());
+        let next = version.next(Date::explicit(-1, 1, 1).unwrap());
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1006,7 +1082,7 @@ mod tests {
     fn test_calsem_neg_year_full_year() {
         let format = CalSem::new_format("<YYYY>.<PATCH>").unwrap();
         let version = Version::parse("2023.1", &format).unwrap();
-        let next = version.next(&Date::explicit(-1, 1, 1).unwrap(), &CalSemLevel::Patch);
+        let next = version.next(Date::explicit(-1, 1, 1).unwrap(), CalSemLevel::Patch);
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1014,7 +1090,7 @@ mod tests {
     fn test_cal_neg_year_short_year() {
         let format = Cal::new_format("<YY>").unwrap();
         let version = Version::parse("2023", &format).unwrap();
-        let next = version.next(&Date::explicit(1999, 1, 1).unwrap());
+        let next = version.next(Date::explicit(1999, 1, 1).unwrap());
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1022,7 +1098,7 @@ mod tests {
     fn test_cal_neg_year_zp_year() {
         let format = Cal::new_format("<0Y>").unwrap();
         let version = Version::parse("23", &format).unwrap();
-        let next = version.next(&Date::explicit(1999, 1, 1).unwrap());
+        let next = version.next(Date::explicit(1999, 1, 1).unwrap());
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1030,7 +1106,7 @@ mod tests {
     fn test_calsem_neg_year_short_year() {
         let format = CalSem::new_format("<YY>.<PATCH>").unwrap();
         let version = Version::parse("2023.1", &format).unwrap();
-        let next = version.next(&Date::explicit(1999, 1, 1).unwrap(), &CalSemLevel::Patch);
+        let next = version.next(Date::explicit(1999, 1, 1).unwrap(), CalSemLevel::Patch);
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1038,7 +1114,7 @@ mod tests {
     fn test_calsem_neg_year_zp_year() {
         let format = CalSem::new_format("<0Y>.<PATCH>").unwrap();
         let version = Version::parse("23.1", &format).unwrap();
-        let next = version.next(&Date::explicit(1999, 1, 1).unwrap(), &CalSemLevel::Patch);
+        let next = version.next(Date::explicit(1999, 1, 1).unwrap(), CalSemLevel::Patch);
         assert!(matches!(next, Err(NextError::NegativeYearValue { .. })));
     }
 
@@ -1058,7 +1134,7 @@ mod tests {
         let cur = Version::parse("1.2.3", &format).unwrap();
 
         for level in [SemLevel::Major, SemLevel::Minor, SemLevel::Patch] {
-            let next = cur.next(&level).unwrap();
+            let next = cur.next(level).unwrap();
             assert!(cur < next);
         }
     }
@@ -1067,7 +1143,7 @@ mod tests {
     fn test_cal_next_greater() {
         let format = Cal::new_format("<YYYY>.<0M>.<0D>").unwrap();
         let cur = Version::parse("2023.12.04", &format).unwrap();
-        let next = cur.next(&Date::explicit(2024, 1, 1).unwrap()).unwrap();
+        let next = cur.next(Date::explicit(2024, 1, 1).unwrap()).unwrap();
         assert!(cur < next);
     }
 
@@ -1075,7 +1151,7 @@ mod tests {
     fn test_cal_next_not_greater() {
         let format = Cal::new_format("<YYYY>.<0M>.<0D>").unwrap();
         let cur = Version::parse("2023.12.04", &format).unwrap();
-        let next = cur.next(&Date::explicit(2022, 1, 1).unwrap());
+        let next = cur.next(Date::explicit(2022, 1, 1).unwrap());
         assert_eq!(next, Err(NextError::NewDateIsBefore));
     }
 
@@ -1084,7 +1160,7 @@ mod tests {
         let format = Cal::new_format("<YYYY>.<0M>.<0D>").unwrap();
         let cur = Version::parse("2023.12.04", &format).unwrap();
         let next = cur
-            .next_unchecked(&Date::explicit(2022, 1, 1).unwrap())
+            .next_unchecked(Date::explicit(2022, 1, 1).unwrap())
             .unwrap();
         assert_eq!("2022.01.01", next.to_string());
     }
@@ -1100,7 +1176,7 @@ mod tests {
         ];
 
         for (date, level) in args {
-            let next = cur.next(&date.unwrap(), &level).unwrap();
+            let next = cur.next(date.unwrap(), level).unwrap();
             assert!(cur < next);
         }
     }
@@ -1109,7 +1185,7 @@ mod tests {
     fn test_calsem_next_not_greater() {
         let format = CalSem::new_format("<YYYY>.<0M>.<0D>.<PATCH>").unwrap();
         let cur = Version::parse("2023.12.04.123", &format).unwrap();
-        let next = cur.next(&Date::explicit(2022, 1, 1).unwrap(), &CalSemLevel::Patch);
+        let next = cur.next(Date::explicit(2022, 1, 1).unwrap(), CalSemLevel::Patch);
         assert_eq!(next, Err(NextError::NewDateIsBefore));
     }
 
@@ -1118,7 +1194,7 @@ mod tests {
         let format = CalSem::new_format("<YYYY>.<0M>.<0D>.<PATCH>").unwrap();
         let cur = Version::parse("2023.12.04.123", &format).unwrap();
         let next = cur
-            .next_unchecked(&Date::explicit(2022, 1, 1).unwrap(), &CalSemLevel::Patch)
+            .next_unchecked(Date::explicit(2022, 1, 1).unwrap(), CalSemLevel::Patch)
             .unwrap();
         assert_eq!("2022.01.01.124", next.to_string());
     }
@@ -1129,11 +1205,10 @@ mod tests {
         let major = 111;
         let minor = 222;
         let patch = 333;
-        let version_str = format!("{}{}{}", major, minor, patch);
+        let version_str = format!("{major}{minor}{patch}");
 
         // nextver is going to interpret: major=1, minor=1, patch=1222333, despite our intentions
-        let next_str =
-            Sem::next_version_string(format_str, &version_str, &SemLevel::Minor).unwrap();
+        let next_str = Sem::next_version_string(format_str, &version_str, SemLevel::Minor).unwrap();
 
         // thus, the next version is: major=1, minor=2, patch=0
         assert_eq!("120", next_str);

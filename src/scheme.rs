@@ -1,10 +1,27 @@
 use crate::{
-    error::{CompositeError, FormatError},
-    format::Format,
+    format::{Format, FormatError},
     specifier::{CalSemLevel, CalSemSpecifier, CalSpecifier, SemSpecifier, Specifier},
-    version::{Date, Version},
+    version::{Date, Version, VersionError, NextError},
     SemLevel,
 };
+
+/// An error that occurred in a function that composes calls for other crate functions with other
+/// error types.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum CompositeError {
+    /// An error from parsing a format string. See [`FormatError`] for more details.
+    #[error(transparent)]
+    Format(#[from] FormatError),
+
+    /// An error from parsing a version string. See [`VersionError`] for more details.
+    #[error(transparent)]
+    Version(#[from] VersionError),
+
+    /// An error incrementing a [`Version`](crate::Version). See [`NextError`] for more details.
+    #[error(transparent)]
+    Next(#[from] NextError),
+}
 
 pub(crate) mod priv_trait {
     use super::Specifier as SpecifierT;
@@ -16,7 +33,7 @@ pub(crate) mod priv_trait {
         /// The kinds of specifiers this scheme uses
         type Specifier: SpecifierT;
 
-        /// The maximum number of specifiers that can be in a format_string. For a given scheme,
+        /// The maximum number of specifiers that can be in a format string. For a given scheme,
         /// this should equal the largest number of specifiers that can be in a valid format.
         ///
         /// See [`Scheme::MAX_TOKENS`].
@@ -58,7 +75,7 @@ pub(crate) mod priv_trait {
             [a, b] => format!("{a} or {b}"),
             [firsts @ .., last] => {
                 let mut joined = firsts.join(", ");
-                joined.push_str(&format!(", or {}", last));
+                joined.push_str(&format!(", or {last}"));
                 joined
             }
         }
@@ -70,10 +87,10 @@ pub(crate) mod priv_trait {
 #[allow(private_bounds)]
 pub trait Scheme: priv_trait::Scheme {
     /// Parse a format string containing specifier and literal tokens into a [`Format`].
-    /// 
+    ///
     /// The format string is made up of specifiers and literals. Specifiers indicate numeric values
     /// that can change, while literals are fixed text.
-    /// 
+    ///
     /// See the specifier table [here](crate#table) for a list of all specifiers, which
     /// appear as `<...>` in the format string. To escape a literal `<`, use `<<`. `>` must not be
     /// escaped.
@@ -120,6 +137,23 @@ pub trait Scheme: priv_trait::Scheme {
     ///
     /// Returns a result of [`Version`] or [`CompositeError`] if either of the format or version
     /// operations fail.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use nextver::prelude::*;
+    ///
+    /// let format_str = "<YYYY>.<0M>.<PATCH>";
+    /// let version_str = "2021.02.3";
+    /// let version = CalSem::new_version(format_str, version_str)?;
+    /// assert_eq!(version_str, &version.to_string());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`CompositeError`] of all error surface area from [`Self::new_format`] and
+    /// [`Format::new_version`].
     fn new_version<'vs>(
         format_str: &str,
         version_str: &'vs str,
@@ -133,6 +167,19 @@ pub trait Scheme: priv_trait::Scheme {
     /// Ok(`false`). Returns an error if the format string could not be parsed.
     ///
     /// Returns a result of [`bool`] or [`FormatError`] if either of the format creation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use nextver::prelude::*;
+    ///
+    /// assert!(Sem::is_valid("<MAJOR>.<MINOR>.<PATCH>", "1.2.3").unwrap());
+    /// assert!(!Sem::is_valid("<MAJOR>.<MINOR>.<PATCH>", "1.2").unwrap());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FormatError`] if the format string could not be parsed.
     fn is_valid(format_str: &str, version_str: &str) -> Result<bool, FormatError> {
         let format = Self::new_format(format_str)?;
         let version = format.new_version(version_str);
@@ -178,7 +225,7 @@ impl Sem {
     /// let next_str = Sem::next_version_string(
     ///   "<MAJOR>.<MINOR>.<PATCH>",
     ///   "1.2.3",
-    ///    &SemLevel::Minor
+    ///    SemLevel::Minor
     /// ).unwrap();
     ///
     /// assert_eq!("1.3.0", next_str);
@@ -191,7 +238,7 @@ impl Sem {
     pub fn next_version_string(
         format_str: &str,
         version_str: &str,
-        level: &SemLevel,
+        level: SemLevel,
     ) -> Result<String, CompositeError> {
         let version = Self::new_version(format_str, version_str)?;
         let next_version = version.next(level)?;
@@ -257,7 +304,7 @@ impl Cal {
     /// let next_str = Cal::next_version_string(
     ///   "<YYYY>.<0M>.<0D>",
     ///   "2001.02.03",
-    ///   &date
+    ///   date
     /// ).unwrap();
     ///
     /// assert_eq!("2024.02.23", next_str);
@@ -270,7 +317,7 @@ impl Cal {
     pub fn next_version_string(
         format_str: &str,
         version_str: &str,
-        date: &Date,
+        date: Date,
     ) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;
@@ -342,8 +389,8 @@ impl CalSem {
     /// let next_str = CalSem::next_version_string(
     ///   "<YYYY>.<0M>.<PATCH>",
     ///   "2024.01.42",
-    ///   &date,
-    ///   &CalSemLevel::Patch
+    ///   date,
+    ///   CalSemLevel::Patch
     /// ).unwrap();
     ///
     /// assert_eq!("2024.02.0", next_str);
@@ -356,8 +403,8 @@ impl CalSem {
     pub fn next_version_string(
         format_str: &str,
         version_str: &str,
-        date: &Date,
-        level: &CalSemLevel,
+        date: Date,
+        level: CalSemLevel,
     ) -> Result<String, CompositeError> {
         let format = Self::new_format(format_str)?;
         let version = Version::parse(version_str, &format)?;

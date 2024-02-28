@@ -24,7 +24,7 @@ use nextver::prelude::*;
 let next = Sem::next_version_string(
   "<MAJOR>.<MINOR>.<PATCH>",  // format string
   "1.2.3",                    // current version string
-  &SemLevel::Minor            // the specifier to increment
+  SemLevel::Minor            // the specifier to increment
 )?;
 assert_eq!(next, "1.3.0");
 ```
@@ -67,7 +67,7 @@ string. Specifiers are bracketed with `<` and `>`.
 In the "Example" column below, we reference a major of `1`, minor of `2`, patch
 of `3` and a date of `2001-02-03` (which is in the 4th week).
 
-| Specifier | Example | Sem | CalSem | Cal | Parse Width | Format Width | Description |
+| Specifier | Example | `Sem` | `CalSem` | `Cal` | Parse Width | Format Width | Description |
 |---|---|---|---|---|---|---|---|
 | `<MAJOR>` | `1` | ✅ | ❌ | ❌ | >=1 | None | The major part of a version |
 | `<MINOR>` | `2` | ✅ | ✅ | ❌ | >=1 | None | The minor part of a version |

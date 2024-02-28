@@ -1,8 +1,7 @@
 use crate::{
-    error::{FormatError, VersionError},
     scheme::Scheme,
     specifier::Specifier,
-    version::Version,
+    version::{Version, VersionError},
 };
 use core::{
     fmt::{self, Display},
@@ -32,13 +31,83 @@ impl<'fs, S: Scheme> Clone for FormatToken<'fs, S> {
 impl<'fs, S: Scheme> Display for FormatToken<'fs, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FormatToken::Specifier(spec) => write!(f, "{}", spec),
+            FormatToken::Specifier(spec) => write!(f, "{spec}"),
             FormatToken::Literal(text) => {
                 let text_str = unsafe { str::from_utf8_unchecked(text) };
                 f.write_str(text_str)
             }
         }
     }
+}
+
+/// An error that occurred while parsing a format string.
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum FormatError {
+    /// The specifier is not terminated with a closing bracket.
+    #[error(
+        "specifier in format should be terminated with a closing square bracket (`>`), got `{pattern}`"
+    )]
+    UnterminatedSpecifier {
+        /// The unterminated specifier string
+        pattern: String,
+    },
+
+    /// The specifier is not a valid specifier for the scheme
+    #[error("specifier `{spec}` is not valid in {scheme_name} format")]
+    UnacceptableSpecifier {
+        /// The specifier
+        spec: String,
+        /// The scheme name
+        scheme_name: &'static str,
+    },
+
+    /// Two adjacent specifiers were not decreasing or decreased by more than one "step". In other
+    /// words, the specifiers are not in the correct order of significance.
+    ///
+    /// # Examples
+    ///
+    /// - `<MAJOR><MAJOR>`: not decreasing
+    /// - `<MAJOR><MINOR><PATCH><MINOR>`: last minor does not decrease     
+    /// - `<YYYY><DD>`: decreasing by more than one step (days are only relative to months)
+    #[error("specifiers must step decrease by their significance, got `{next}` after `{prev}`")]
+    SpecifiersMustStepDecrease {
+        /// The first specifier
+        prev: String,
+        /// The second specifier
+        next: String,
+    },
+
+    /// The first specifier in a format is not allowed to be there
+    #[error(
+        "in {scheme_name} format, first specifier should be {expected_first}, got `{first_spec}`"
+    )]
+    WrongFirstSpecifier {
+        /// The specifier
+        first_spec: String,
+        /// The scheme name
+        scheme_name: &'static str,
+        /// A (possibly comma-separated) list of expected specifiers
+        expected_first: String,
+    },
+
+    /// The last specifier in a format does not complete the format
+    #[error(
+        "in {scheme_name} format, last specifier should be {expected_last}, got `{last_spec}`"
+    )]
+    Incomplete {
+        /// The last specifier
+        last_spec: String,
+        /// The scheme name
+        scheme_name: &'static str,
+        /// A (possibly comma-separated) list of expected specifiers
+        expected_last: String,
+    },
+
+    /// The format string should contain at least one specifier
+    #[error("format should contain at least one specifier")]
+    NoSpecifiersInFormat,
 }
 
 /// A Format describes the structure of a version, comprised of *specifiers* and *literal text*.
@@ -109,10 +178,8 @@ impl<'fs, S: Scheme> Format<'fs, S> {
                         })?;
                     // found closing, but unknown for this scheme
                     return Err(FormatError::UnacceptableSpecifier {
-                        spec: unsafe {
-                            std::str::from_utf8_unchecked(&format[..closing_index + 1])
-                        }
-                        .to_string(),
+                        spec: unsafe { std::str::from_utf8_unchecked(&format[..=closing_index]) }
+                            .to_string(),
                         scheme_name: S::name(),
                     });
                 } else {
@@ -345,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_bad_sem_format() {
-        use crate::error::FormatError::*;
+        use super::FormatError::*;
         use crate::scheme::priv_trait::Scheme;
 
         // not exhaustive, just a sample
@@ -397,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_bad_cal_format() {
-        use crate::error::FormatError::*;
+        use super::FormatError::*;
         use crate::scheme::priv_trait::Scheme;
 
         // not exhaustive, just a sample
@@ -449,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_bad_calsem_format() {
-        use crate::error::FormatError::*;
+        use super::FormatError::*;
         use crate::scheme::priv_trait::Scheme;
 
         // not exhaustive, just a sample

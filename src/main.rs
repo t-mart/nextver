@@ -77,7 +77,7 @@ fn next(
     scheme: &SchemeArg,
     format_str: &str,
     version_str: &str,
-    date: &Date,
+    date: Date,
     spec: Option<&SemLevelArg>,
 ) -> Result<Output, NextVerCliError> {
     // functions to get the semantic specifier from the option, that error if we need it but
@@ -93,21 +93,21 @@ fn next(
     };
 
     let next_version = match scheme {
-        SchemeArg::Sem => Sem::next_version_string(format_str, version_str, &sem_spec()?)?,
+        SchemeArg::Sem => Sem::next_version_string(format_str, version_str, sem_spec()?)?,
 
         SchemeArg::Cal => Cal::next_version_string(format_str, version_str, date)?,
 
         SchemeArg::CalSem => {
-            CalSem::next_version_string(format_str, version_str, date, &cal_sem_spec()?)?
+            CalSem::next_version_string(format_str, version_str, date, cal_sem_spec()?)?
         }
 
         SchemeArg::Guess => {
             if let Ok(sem_ver) = Sem::new_version(format_str, version_str) {
-                sem_ver.next(&sem_spec()?)?.to_string()
+                sem_ver.next(sem_spec()?)?.to_string()
             } else if let Ok(cal_ver) = Cal::new_version(format_str, version_str) {
                 cal_ver.next(date)?.to_string()
             } else if let Ok(cal_sem_ver) = CalSem::new_version(format_str, version_str) {
-                cal_sem_ver.next(date, &cal_sem_spec()?)?.to_string()
+                cal_sem_ver.next(date, cal_sem_spec()?)?.to_string()
             } else {
                 return Err(NextVerCliError::NoValidScheme);
             }
@@ -266,7 +266,7 @@ fn run(cli: Cli) -> Result<Output, NextVerCliError> {
             sem_level: level,
             date,
             scheme,
-        }) => next(&scheme, &format, &version, &date, level.as_ref()),
+        }) => next(&scheme, &format, &version, date, level.as_ref()),
         None => unreachable!("clap should catch this no-subcommand case"),
     }
 }
