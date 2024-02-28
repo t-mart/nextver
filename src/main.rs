@@ -287,7 +287,8 @@ mod tests {
             "2024-02-26",
             "--sem-level",
             "patch",
-        ]).unwrap();
+        ])
+        .unwrap();
 
         assert_eq!(Ok(("2024.08.0".to_string(), ExitCode::Success,)), run(res));
     }
@@ -304,7 +305,8 @@ mod tests {
             "2024-02-26",
             "--sem-level",
             "patch",
-        ]).unwrap();
+        ])
+        .unwrap();
 
         assert_eq!(Ok(("2024.08.1".to_string(), ExitCode::Success,)), run(res));
     }

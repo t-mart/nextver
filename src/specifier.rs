@@ -103,7 +103,7 @@ impl ParseWidth {
     pub(crate) fn max_width(&self) -> usize {
         match self {
             Self::AtLeastOne | Self::AtLeastTwo => usize::MAX,
-            Self::OneOrTwo |Self::Two => 2,
+            Self::OneOrTwo | Self::Two => 2,
         }
     }
 }

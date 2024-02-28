@@ -1,7 +1,7 @@
 use crate::{
     format::{Format, FormatError},
     specifier::{CalSemLevel, CalSemSpecifier, CalSpecifier, SemSpecifier, Specifier},
-    version::{Date, Version, VersionError, NextError},
+    version::{Date, NextError, Version, VersionError},
     SemLevel,
 };
 
