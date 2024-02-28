@@ -20,7 +20,7 @@
 //! let next = Sem::next_version_string(
 //!   "<MAJOR>.<MINOR>.<PATCH>",  // format string
 //!   "1.2.3",                    // current version string
-//!   SemLevel::Minor            // the specifier to increment
+//!   SemLevel::Minor             // the specifier to increment
 //! )?;
 //! assert_eq!(next, "1.3.0");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -29,14 +29,14 @@
 //! ```
 //! use nextver::prelude::*;
 //!
-//! let date = Date::utc_now();       // assume today is 2024-02-23
+//! let date = Date::utc_now();  // assume today is 2024-02-23
 //! # let date = Date::explicit(2024, 2, 23)?;
 //!
 //! let next = CalSem::next_version_string(
-//!   "<YYYY>.<0M>-<PATCH>",          // format string
-//!   "2023.12-42",                   // current version string
-//!   date,                          // the date to update to
-//!   CalSemLevel::Patch             // the specifier to increment if no calendar update
+//!   "<YYYY>.<0M>-<PATCH>",  // format string
+//!   "2023.12-42",           // current version string
+//!   date,                   // the date to update to
+//!   CalSemLevel::Patch      // the specifier to increment if no calendar update
 //! )?;
 //! assert_eq!(next, "2024.02-0");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -54,7 +54,7 @@
 //! let cur = format.new_version("2023.12.42")?;
 //! let next = cur.next(date, CalSemLevel::Patch)?;
 //! assert_eq!(next.to_string(), "2024.2.0");
-//! // comparisons are also possible with Version objects
+//! // the next version will be compare as greater than the current
 //! assert!(next > cur);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
